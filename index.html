@@ -992,7 +992,7 @@ function bindEvents(){
   $$('[data-del-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();if(confirm('删除该校区？')){Store.saveCampuses(Store.campuses().filter(x=>x.id!==el.dataset.delCampus));render();}};});
   const ib=$('#btn-import');if(ib)ib.onclick=showImport;
   const sb=$('#btn-sample');if(sb)sb.onclick=loadDemoData;
-  const cb=$('#btn-clear');if(cb)cb.onclick=()=>{if(confirm('清除全部数据？不可恢复！')){localStorage.clear();render();}};
+  const cb=$('#btn-clear');if(cb)cb.onclick=()=>{if(confirm('⚠️ 清除全部数据？')){if(confirm('所有学生、排课、财务记录将永久删除，无法恢复。确认？')){localStorage.clear();render();toast('已清除全部数据');}}};
 }
 
 function bindStudentDetailEvents(sid){
