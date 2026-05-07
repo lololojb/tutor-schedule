@@ -163,9 +163,22 @@ const COURSE_TYPES={private:'家教课',institution:'机构课',practice:'陪练
 function courseTypeName(t){return COURSE_TYPES[t]||'家教课';}
 
 // ==================== MAP / COMMUTE ====================
+function openGaodeNav(loc,campusId){
+  const campuses=Store.campuses();const c=campuses.find(x=>x.id===campusId);
+  const coords=c?.coords;const fullAddr=c?.address||loc;
+  if(coords){
+    window.open(`https://uri.amap.com/navigation?to=${coords.lng},${coords.lat},${encodeURIComponent(c.name)}&mode=transit`,'_blank');
+  }else if(fullAddr){
+    window.open(`https://uri.amap.com/search?keyword=${encodeURIComponent('深圳'+fullAddr)}`,'_blank');
+  }else{
+    window.open(`https://uri.amap.com/search?keyword=${encodeURIComponent('深圳'+loc)}`,'_blank');
+  }
+}
+
 async function geocodeAddr(addr){
   if(!addr) return null;
-  const cached=Store.geocode(addr);
+  const fullAddr=addr.includes('深圳')?addr:'深圳'+addr;
+  const cached=Store.geocode(fullAddr);
   if(cached) return cached;
   try{
     const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&limit=1`);
@@ -203,15 +216,16 @@ async function calcCommute(fromAddr,toAddr){
 }
 
 async function calcAllCommutes(lessons){
-  // Pre-calc all campus pairs for today's lessons
   const campuses=Store.campuses();
   const results={};
   for(let i=0;i<lessons.length-1;i++){
     const a=lessons[i], b=lessons[i+1];
     const cA=campuses.find(c=>c.id===a.campusId);
     const cB=campuses.find(c=>c.id===b.campusId);
-    if(cA&&cB&&cA.id!==cB.id){
-      results[i]=await calcCommute(cA.address,cB.address);
+    let fromAddr=cA?.address||a.location;if(fromAddr&&!fromAddr.includes('深圳'))fromAddr='深圳'+fromAddr;
+    let toAddr=cB?.address||b.location;if(toAddr&&!toAddr.includes('深圳'))toAddr='深圳'+toAddr;
+    if(fromAddr&&toAddr&&(cA?.id!==cB?.id||!cA)){
+      results[i]=await calcCommute(fromAddr,toAddr);
     }
   }
   return results;
@@ -346,8 +360,7 @@ function renderToday(){
             <div class="time-col"><div class="t1">${fmt.time(l.startHour,l.startMinute)}</div><div class="t2">${fmt.time(l.endHour,l.endMinute)}</div></div>
             <div class="info-col">
               <div class="nm">${student?.name||'未知'}${l.isAdjusted?' <span class="badge adjusted">已调整</span>':''}</div>
-              ${l.location?`<div class="loc">📍 ${l.location}</div>`:''}
-              ${campus?`<div class="loc">🏫 ${campus.name}</div>`:''}
+              ${l.location||campus?`<div class="loc nav-loc" data-loc="${l.location||''}" data-campus="${l.campusId||''}" style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--blue);text-underline-offset:2px">🧭 ${l.location||campus?.name||''} → 导航</div>`:''}
               <span class="badge ${bc}" style="margin-top:4px">${bt}</span>
             </div>
             <div class="fee-col"><div class="fee">¥${l.actualFee!=null?l.actualFee:l.plannedFee}</div></div>
@@ -407,18 +420,22 @@ async function calcAndShowCommute(){
     const gap=(b.startHour*60+b.startMinute)-(a.endHour*60+a.endMinute);
     const commuteNeed=commutes[i]||0;
     el.style.display='flex';
+    const metroNeed=Math.round(commuteNeed*1.1); // 地铁≈驾车时间，略加换乘
     if(commuteNeed===0){
       el.className='commute-bar ok';
-      el.textContent='📍 同校区，间隔'+gap+'分钟';
+      el.textContent=`📍 同区域 · 间隔${gap}分钟`;
     }else if(commuteNeed>gap){
       el.className='commute-bar error';
-      el.textContent=`⚠️ 通勤不足！需${commuteNeed}min，仅剩${gap}min`;
-    }else if(gap-commuteNeed<10){
+      el.textContent=`🚇 地铁约${metroNeed}min ≥ 间隔${gap}min，来不及！点地点换导航看路线`;
+    }else if(metroNeed>gap){
       el.className='commute-bar info';
-      el.textContent=`⏱ 通勤${commuteNeed}min，仅${gap-commuteNeed}min余量，建议${fmt.time(b.startHour,b.startMinute-commuteNeed)}出发`;
+      el.textContent=`🚇 地铁约${metroNeed}min，间隔仅${gap}min，建议${fmt.time(b.startHour,b.startMinute-metroNeed)}前出发`;
+    }else if(gap-commuteNeed<15){
+      el.className='commute-bar info';
+      el.textContent=`🚇 地铁约${metroNeed}min · 间隔${gap}min · 建议${fmt.time(b.startHour,b.startMinute-metroNeed)}出发`;
     }else{
       el.className='commute-bar ok';
-      el.textContent=`✅ 通勤${commuteNeed}min，间隔${gap}min，余${gap-commuteNeed}min`;
+      el.textContent=`🚇 地铁约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
     }
   });
 }
@@ -982,6 +999,8 @@ function bindEvents(){
   $$('.student-row[data-student]').forEach(el=>{el.onclick=()=>renderStudentDetail(el.dataset.student);});
   $$('.student-row[data-lesson]').forEach(el=>{el.onclick=()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l)showLessonEdit(l);};});
   $$('.lesson-card').forEach(el=>{el.onclick=()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l)showLessonEdit(l);};});
+  // Location click -> 高德导航
+  $$('.nav-loc').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();openGaodeNav(el.dataset.loc,el.dataset.campus);};});
   // Long press -> mark completed
   $$('.lesson-card').forEach(el=>{let t;el.addEventListener('touchstart',()=>{t=setTimeout(()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l&&l.status==='scheduled'){l.status='completed';l.actualFee=l.plannedFee;Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));toast('✓ 已标记完成');render();}},600);});el.addEventListener('touchend',()=>clearTimeout(t));el.addEventListener('touchmove',()=>clearTimeout(t));});
   const pm=$('#btn-pm');if(pm)pm.onclick=()=>{financeMonth.setMonth(financeMonth.getMonth()-1);render();};
