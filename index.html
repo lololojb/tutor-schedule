@@ -318,7 +318,11 @@ function renderToday(){
     const monthDone=allLessons.filter(l=>l.date>=ms.toDateStr()&&l.date<me.toDateStr()&&l.status==='completed');
     const monthScheduled=allLessons.filter(l=>l.date>=ms.toDateStr()&&l.date<me.toDateStr()&&l.status==='scheduled');
     const monthIncome=monthDone.reduce((s,l)=>s+(l.actualFee||l.plannedFee||0),0);
+    // Weekly stats
+    const mon=C.monday(now);const monStr=mon.toDateStr();
+    const weekDone=allLessons.filter(l=>l.date>=monStr&&l.date<me.toDateStr()&&l.status==='completed');
     html+=`<div class="summary-cards" style="margin-bottom:0">
+      <div class="summary-card" style="padding:10px 14px"><div class="t">本周已上</div><div class="v blue" style="font-size:20px">${weekDone.length}节</div></div>
       <div class="summary-card" style="padding:10px 14px"><div class="t">本月已上</div><div class="v blue" style="font-size:20px">${monthDone.length}节</div></div>
       <div class="summary-card" style="padding:10px 14px"><div class="t">待上课</div><div class="v" style="font-size:20px;color:var(--orange)">${monthScheduled.length}节</div></div>
       <div class="summary-card" style="padding:10px 14px"><div class="t">本月收入</div><div class="v green" style="font-size:20px">¥${monthIncome}</div></div>
@@ -608,26 +612,33 @@ function showImport(){
 
 支持：周X 标题行 / 名字 时间-时间 地点 / (备注)
 自动识别：请假跳过、停课标记、地点自动提取"></textarea>
-    <p class="form-hint">格式：<b>名字 开始-结束 地点 (备注)</b>，括号里是备注如请假/停课</p>
+    <p class="form-hint">格式：<b>名字 开始-结束 地点 (备注)</b><br>已有学生<b>不会覆盖</b>课程类型和价格，只合并新的排课时间段</p>
   </div>`;
   showSheet('导入课表',body,overlay=>{
     const text=overlay.querySelector('#import-text').value.trim();
     if(!text){toast('请粘贴课表文本');return false;}
     const result=parseSchedule(text);
     if(result.students.length===0){toast('未能识别任何课程，请检查格式');return false;}
-    // Merge into existing data
+    // Merge into existing data (preserve user customizations)
     const existingStudents=Store.students();
     const existingLessons=Store.lessons();
     result.students.forEach(newStu=>{
       const exist=existingStudents.find(s=>s.name===newStu.name);
       if(exist){
-        // Update schedules
-        exist.schedules=[...(exist.schedules||[]),...(newStu.schedules||[])];
-        // De-duplicate schedules
-        exist.schedules=exist.schedules.filter((sc,i,arr)=>arr.findIndex(x=>x.weekday===sc.weekday&&x.startHour===sc.startHour&&x.startMinute===sc.startMinute)===i);
-        exist.isActive=true;
-        if(newStu.parentContact) exist.parentContact=newStu.parentContact;
-        if(newStu.defaultFee) exist.defaultFee=newStu.defaultFee;
+        // Only add NEW schedules (keep existing ones)
+        const oldSchs=exist.schedules||[];
+        (newStu.schedules||[]).forEach(ns=>{
+          const dup=oldSchs.find(s=>s.weekday===ns.weekday&&s.startHour===ns.startHour&&s.startMinute===ns.startMinute);
+          if(!dup) oldSchs.push(ns);
+        });
+        exist.schedules=oldSchs;
+        // Restore notes from import if they have useful info (请假/停课/未定等)
+        if(newStu.notes&&exist.notes!==newStu.notes&&/请假|停课|未定|两周一节/.test(newStu.notes)){
+          exist.notes=(exist.notes?exist.notes+'；':'')+newStu.notes;
+        }
+        if(newStu.parentContact&&!exist.parentContact) exist.parentContact=newStu.parentContact;
+        if(newStu.defaultLocation&&!exist.defaultLocation) exist.defaultLocation=newStu.defaultLocation;
+        // NEVER overwrite: courseType, defaultFee, defaultCampusId, isActive
       }else{
         existingStudents.push(newStu);
       }
@@ -961,7 +972,11 @@ function bindEvents(){
   $$('.segmented button').forEach(el=>{el.onclick=()=>{dayWeekMode=el.dataset.mode;render();};});
   const eb=$('#btn-export');if(eb)eb.onclick=exportWeekImage;
   const al=$('#btn-add-lesson');if(al)al.onclick=showAdHocLesson;
-  const schEl=$('#search-students');if(schEl){schEl.oninput=()=>{studentFilter=schEl.value;render();setTimeout(()=>{const si=$('#search-students');if(si){si.focus();si.setSelectionRange(si.value.length,si.value.length);}},50);};}
+  const schEl=$('#search-students');if(schEl){
+    const doFilter=()=>{studentFilter=schEl.value;filterStudentDOM();};
+    schEl.addEventListener('input',doFilter);
+    schEl.addEventListener('compositionend',doFilter);
+  }
   $$('#campus-filter .filter-pill').forEach(el=>{el.onclick=()=>{studentCampusFilter=el.dataset.campus;render();};});
   const addStu=$('#btn-add-student');if(addStu)addStu.onclick=()=>showStudentEdit();
   $$('.student-row[data-student]').forEach(el=>{el.onclick=()=>renderStudentDetail(el.dataset.student);});
@@ -985,6 +1000,15 @@ function bindStudentDetailEvents(sid){
   $$('[data-edit-student]').forEach(el=>{el.onclick=function(){const s=Store.students().find(x=>x.id===this.dataset.editStudent);if(s)showStudentEdit(s);};});
   $$('[data-delete-student]').forEach(el=>{el.onclick=function(){if(confirm('删除该学生及所有课程记录？')){Store.saveStudents(Store.students().filter(x=>x.id!==this.dataset.deleteStudent));Store.saveLessons(Store.lessons().filter(x=>x.studentId!==this.dataset.deleteStudent));render();}};});
   $$('.student-row[data-lesson]').forEach(el=>{el.onclick=()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l)showLessonEdit(l);};});
+}
+
+// ==================== DOM FILTER ====================
+function filterStudentDOM(){
+  const q=studentFilter.toLowerCase();
+  $$('.student-row').forEach(row=>{
+    if(!q){row.style.display='';return;}
+    row.style.display=(row.textContent||'').toLowerCase().includes(q)?'':'none';
+  });
 }
 
 // ==================== UTILS ====================
