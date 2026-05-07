@@ -1,0 +1,18 @@
+{
+  "name": "家教排课",
+  "short_name": "排课",
+  "description": "家教排课助手 - 学生管理、课表、财务统计",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f2f2f7",
+  "theme_color": "#f2f2f7",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' rx='40' fill='%23007AFF'/><text x='90' y='110' text-anchor='middle' font-size='80' fill='white'>📚</text></svg>",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
