@@ -674,9 +674,9 @@ function parseSchedule(text){
     const existingStu=students.find(s=>s.name===name);
     if(!existingStu){
       students.push({
-        id:Store.uid(),name,parentContact:'',courseType:'private',defaultLocation:location,defaultFee:200,
+        id:Store.uid(),name,parentContact:'',courseType:'private',defaultLocation:location,defaultFee:100,
         defaultCampusId:null,isActive:!isSuspended,notes:note,
-        schedules:isSuspended?[]:[{weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:200,campusId:null}]
+        schedules:isSuspended?[]:[{weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:100,campusId:null}]
       });
     }else{
       if(!existingStu.schedules) existingStu.schedules=[];
@@ -691,7 +691,7 @@ function parseSchedule(text){
       if(!isSuspended){
         const dup=existingStu.schedules.find(sc=>sc.weekday===currentWeekday&&sc.startHour===sh&&sc.startMinute===sm);
         if(!dup){
-          existingStu.schedules.push({weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:200,campusId:null});
+          existingStu.schedules.push({weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:100,campusId:null});
         }
       }
     }
@@ -705,7 +705,7 @@ function parseSchedule(text){
       if(daysUntil<0) daysUntil+=7;
       if(daysUntil===0&&targetDate.getHours()>eh) daysUntil=7;
       targetDate.setDate(targetDate.getDate()+daysUntil);
-      lessons.push({studentName:name,id:Store.uid(),date:targetDate.toDateStr(),startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,plannedFee:200,campusId:null,actualFee:null,status:'scheduled',isAdjusted:false,notes:note||''});
+      lessons.push({studentName:name,id:Store.uid(),date:targetDate.toDateStr(),startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,plannedFee:100,campusId:null,actualFee:null,status:'scheduled',isAdjusted:false,notes:note||''});
     }
   });
 
@@ -744,7 +744,7 @@ function showAdHocLesson(){
       id:Store.uid(),studentId,date:overlay.querySelector('#ef-ah-date').value,
       startHour:parseInt(overlay.querySelector('#ef-ah-sh').value),startMinute:parseInt(overlay.querySelector('#ef-ah-sm').value),
       endHour:parseInt(overlay.querySelector('#ef-ah-eh').value),endMinute:parseInt(overlay.querySelector('#ef-ah-em').value),
-      location:overlay.querySelector('#ef-ah-loc').value.trim(),plannedFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||200,
+      location:overlay.querySelector('#ef-ah-loc').value.trim(),plannedFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||100,
       campusId:null,actualFee:null,status:'scheduled',isAdjusted:true,notes:overlay.querySelector('#ef-ah-note').value.trim()
     });
     Store.saveLessons(lessons);
@@ -783,7 +783,7 @@ function showStudentEdit(student){
       <input data-sch-sm="${i}" type="number" value="${sc.startMinute||0}" min="0" max="45" step="15" style="width:42px;padding:4px">-
       <input data-sch-eh="${i}" type="number" value="${sc.endHour}" min="6" max="22" style="width:42px;padding:4px">:
       <input data-sch-em="${i}" type="number" value="${sc.endMinute||0}" min="0" max="45" step="15" style="width:42px;padding:4px">
-       ¥<input data-sch-fee="${i}" type="number" value="${sc.fee||s.defaultFee||200}" style="width:50px;padding:4px">
+       ¥<input data-sch-fee="${i}" type="number" value="${sc.fee||0}" placeholder="${s.defaultFee||100}" style="width:50px;padding:4px">
       <button data-del-sch="${i}" style="color:var(--red);font-size:18px">×</button>
     </div>`;
   });
@@ -833,16 +833,34 @@ function showStudentEdit(student){
       notes:overlay.querySelector('#ef-notes').value.trim(),
     };
     const students=Store.students();const idx=students.findIndex(x=>x.id===data.id);
+    const oldFee=idx>=0?students[idx].defaultFee:null;
     if(idx>=0) students[idx]=data;else students.push(data);
-    Store.saveStudents(students);generateLessons();return true;
+    Store.saveStudents(students);
+    // Change course type → sync all future scheduled lessons and schedule fees
+    const todayStr=C.today().toDateStr();
+    if(oldFee!=null&&Math.abs((oldFee||0)-(data.defaultFee||0))>0.1){
+      const lessons=Store.lessons();
+      let updated=0;
+      lessons.forEach(l=>{if(l.studentId===data.id&&l.status==='scheduled'&&l.date>=todayStr&&l.plannedFee!==data.defaultFee){l.plannedFee=data.defaultFee;updated++;}});
+      Store.saveLessons(lessons);
+      // Also update schedule fees to match
+      data.schedules.forEach(sc=>{sc.fee=0;}); // 0 = use student defaultFee
+      if(updated>0) setTimeout(()=>toast(`已同步更新 ${updated} 节课的价格为 ¥${data.defaultFee}`),300);
+    }
+    generateLessons();return true;
   });
 
   setTimeout(()=>{
-    // Auto-set fee when course type changes
+    // Auto-set fee when course type changes (also update schedule fees)
     const typeSel=$('#ef-type');
     const feeInput=$('#ef-fee');
     if(typeSel&&feeInput){
-      typeSel.onchange=()=>{feeInput.value=Store.getCourseFee(typeSel.value);};
+      typeSel.onchange=()=>{
+        const newFee=Store.getCourseFee(typeSel.value);
+        feeInput.value=newFee;
+        // Also update all schedule fee inputs
+        $$('#sch-list [data-sch-fee]').forEach(el=>{el.value=newFee;});
+      };
     }
     $('#btn-add-sch').onclick=()=>{
       const list=$('#sch-list');
@@ -855,7 +873,7 @@ function showStudentEdit(student){
         <input data-sch-sm="${i}" type="number" value="0" min="0" max="45" step="15" style="width:42px;padding:4px">-
         <input data-sch-eh="${i}" type="number" value="11" min="6" max="22" style="width:42px;padding:4px">:
         <input data-sch-em="${i}" type="number" value="0" min="0" max="45" step="15" style="width:42px;padding:4px">
-         ¥<input data-sch-fee="${i}" type="number" value="${$('#ef-fee')?.value||200}" style="width:50px;padding:4px">
+         ¥<input data-sch-fee="${i}" type="number" value="0" placeholder="默认" style="width:50px;padding:4px">
         <button data-del-sch="${i}" style="color:var(--red);font-size:18px">×</button>`;
       list.appendChild(div);
       div.querySelector('[data-del-sch]').onclick=()=>div.remove();

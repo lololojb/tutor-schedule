@@ -1,4 +1,4 @@
-const CACHE='tutorschedule-v6';
+const CACHE='tutorschedule-v9';
 const FILES=[
   '.',
   'index.html',
