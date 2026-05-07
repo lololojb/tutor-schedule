@@ -116,9 +116,12 @@ label{font-size:13px;color:var(--sec);display:block;margin-bottom:4px}
 <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
 <script>
 // ==================== DATA STORE ====================
-const Store={
-  get(k){try{return JSON.parse(localStorage.getItem('ts_'+k))}catch{return null}},
-  set(k,v){localStorage.setItem('ts_'+k,JSON.stringify(v))},
+const Store=(()=>{
+  let mem={},useMem=false;
+  try{localStorage.setItem('_test','1');localStorage.removeItem('_test')}catch(e){useMem=true}
+  return {
+  get(k){try{if(useMem)return mem[k]||null;return JSON.parse(localStorage.getItem('ts_'+k))}catch(e){return mem[k]||null}},
+  set(k,v){mem[k]=v;try{if(!useMem)localStorage.setItem('ts_'+k,JSON.stringify(v))}catch(e){useMem=true}},
   uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,8)},
   campuses(){return this.get('campuses')||[]},
   saveCampuses(v){this.set('campuses',v)},
@@ -135,7 +138,7 @@ const Store={
   setGeocode(k,v){this.set('geo_'+k,v)},
   route(k){return this.get('route_'+k)},
   setRoute(k,v){this.set('route_'+k,v)},
-};
+};})();
 
 // ==================== HELPERS ====================
 const fmt={
@@ -422,23 +425,48 @@ let studentFilter='',studentCampusFilter='';
 function renderStudents(){
   const students=Store.students();
   const campuses=Store.campuses();
+
+  // Course type stats
+  let instCount=0,privCount=0,pracCount=0,totalActive=0;
+  students.forEach(s=>{
+    if(s.isActive===false) return;
+    totalActive++;
+    const t=s.courseType||'institution';
+    if(t==='institution') instCount++;
+    else if(t==='private') privCount++;
+    else if(t==='practice') pracCount++;
+  });
+
   let html=`<div style="padding:12px 16px;display:flex;gap:8px">
-    <input type="search" placeholder="搜索学生..." id="search-students" value="${studentFilter}" style="flex:1">
+    <input type="search" placeholder="搜索姓名或电话..." id="search-students" value="${studentFilter}" style="flex:1">
     <button class="btn btn-primary" id="btn-add-student">+</button>
-  </div><div class="filter-row" id="campus-filter">
+  </div>`;
+
+  // Course type summary chips
+  html+=`<div style="display:flex;gap:8px;padding:0 16px 4px;font-size:12px">
+    <span style="background:#f0f0f5;padding:4px 10px;border-radius:12px">🏫 机构 ${instCount}人</span>
+    <span style="background:#f0f0f5;padding:4px 10px;border-radius:12px">🏠 家教 ${privCount}人</span>
+    <span style="background:#f0f0f5;padding:4px 10px;border-radius:12px">🎹 陪练 ${pracCount}人</span>
+    <span style="color:var(--sec);padding:4px 6px">共${totalActive}人</span>
+  </div>`;
+
+  html+=`<div class="filter-row" id="campus-filter">
     <span class="filter-pill${!studentCampusFilter?' active':''}" data-campus="">全部</span>`;
   campuses.forEach(c=>{html+=`<span class="filter-pill${studentCampusFilter===c.id?' active':''}" data-campus="${c.id}">${c.name}</span>`;});
   html+='</div>';
 
   let filtered=students;
-  if(studentFilter) filtered=filtered.filter(s=>s.name.toLowerCase().includes(studentFilter.toLowerCase())||(s.parentContact||'').includes(studentFilter));
+  if(studentFilter){
+    const q=studentFilter.toLowerCase();
+    filtered=filtered.filter(s=>s.name.toLowerCase().includes(q)||(s.parentContact||'').toLowerCase().includes(q));
+  }
   if(studentCampusFilter) filtered=filtered.filter(s=>(s.defaultCampusId||'')===studentCampusFilter);
 
   const active=filtered.filter(s=>s.isActive!==false);
   const inactive=filtered.filter(s=>s.isActive===false);
 
   if(filtered.length===0){
-    html+=`<div class="empty"><div class="title">暂无学生</div><div class="sub">点 + 添加，或去设置导入课表</div></div>`;
+    html+=`<div class="empty"><div class="title">${studentFilter?'无匹配结果':'暂无学生'}</div><div class="sub">${studentFilter?'换个关键词试试':'点 + 添加，或去设置导入课表'}</div></div>`;
   }else{
     html+='<div style="margin-top:8px">';
     [...active,...inactive].forEach(s=>{
@@ -448,9 +476,9 @@ function renderStudents(){
         return`每${wd} ${fmt.time(sc.startHour,sc.startMinute)}-${fmt.time(sc.endHour,sc.endMinute)}`;
       }).join('、');
       html+=`<div class="student-row" data-student="${s.id}">
-        <div class="av" style="background:${s.isActive===false?'#8e8e93':'var(--blue)'}">${s.name[0]}</div>
+        <div class="av" style="background:${s.isActive===false?'#8e8e93':s.courseType==='private'?'#FF9500':s.courseType==='practice'?'#AF52DE':'#007AFF'}">${s.name[0]}</div>
         <div class="info"><div class="nm">${s.name}${s.isActive===false?' (已停用)':''}</div>
-        <div class="sub"><span class="sch-chip" style="font-size:10px;padding:1px 6px">${courseTypeName(s.courseType||'private')}</span> ${schs||'未设置排课'} · ¥${s.defaultFee||0}/节${campus?' · '+campus.name:''}</div></div>
+        <div class="sub"><span class="sch-chip" style="font-size:10px;padding:1px 6px">${courseTypeName(s.courseType||'institution')}</span> ${schs||'未设置排课'} · ¥${s.defaultFee||0}/节${campus?' · '+campus.name:''}</div></div>
         <span style="color:var(--sec)">›</span></div>`;
     });
     html+='</div>';
@@ -474,7 +502,7 @@ function renderStudentDetail(sid){
       ${s.parentContact?`<p style="color:var(--sec);margin-top:4px">📱 ${s.parentContact}</p>`:''}
       ${s.defaultLocation?`<p style="color:var(--sec)">📍 ${s.defaultLocation}</p>`:''}
       ${campus?`<p style="color:var(--sec)">🏫 ${campus.name}</p>`:''}
-      <p style="color:var(--sec)">📋 ${courseTypeName(s.courseType||'private')} · 💰 ¥${s.defaultFee||0}/节</p>
+      <p style="color:var(--sec)">📋 ${courseTypeName(s.courseType||'institution')} · 💰 ¥${s.defaultFee||0}/节</p>
     </div>
 
     <h3 style="margin-top:20px;font-size:15px;font-weight:600">每周排课</h3>`;
@@ -549,8 +577,8 @@ function renderSettings(){
   const students=Store.students();
   const ct=Store.courseTypes();
   let html=`<div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">课程类型默认价格</h3>
+    <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--sep)"><span style="flex:1">🏫 机构课 (默认)</span>¥<input id="set-fee-institution" type="number" value="${ct.institution||80}" style="width:70px;padding:6px;text-align:center">/节</div>
     <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--sep)"><span style="flex:1">🏠 家教课</span>¥<input id="set-fee-private" type="number" value="${ct.private||100}" style="width:70px;padding:6px;text-align:center">/节</div>
-    <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--sep)"><span style="flex:1">🏫 机构课</span>¥<input id="set-fee-institution" type="number" value="${ct.institution||80}" style="width:70px;padding:6px;text-align:center">/节</div>
     <div style="display:flex;align-items:center;padding:8px 0"><span style="flex:1">🎹 陪练课</span>¥<input id="set-fee-practice" type="number" value="${ct.practice||75}" style="width:70px;padding:6px;text-align:center">/节</div>
     <button class="btn btn-ghost btn-sm" id="btn-save-types" style="margin-top:8px">保存默认价格</button>
   </div>
@@ -674,9 +702,9 @@ function parseSchedule(text){
     const existingStu=students.find(s=>s.name===name);
     if(!existingStu){
       students.push({
-        id:Store.uid(),name,parentContact:'',courseType:'private',defaultLocation:location,defaultFee:100,
+        id:Store.uid(),name,parentContact:'',courseType:'institution',defaultLocation:location,defaultFee:80,
         defaultCampusId:null,isActive:!isSuspended,notes:note,
-        schedules:isSuspended?[]:[{weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:100,campusId:null}]
+        schedules:isSuspended?[]:[{weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:80,campusId:null}]
       });
     }else{
       if(!existingStu.schedules) existingStu.schedules=[];
@@ -691,7 +719,7 @@ function parseSchedule(text){
       if(!isSuspended){
         const dup=existingStu.schedules.find(sc=>sc.weekday===currentWeekday&&sc.startHour===sh&&sc.startMinute===sm);
         if(!dup){
-          existingStu.schedules.push({weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:100,campusId:null});
+          existingStu.schedules.push({weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:80,campusId:null});
         }
       }
     }
@@ -705,7 +733,7 @@ function parseSchedule(text){
       if(daysUntil<0) daysUntil+=7;
       if(daysUntil===0&&targetDate.getHours()>eh) daysUntil=7;
       targetDate.setDate(targetDate.getDate()+daysUntil);
-      lessons.push({studentName:name,id:Store.uid(),date:targetDate.toDateStr(),startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,plannedFee:100,campusId:null,actualFee:null,status:'scheduled',isAdjusted:false,notes:note||''});
+      lessons.push({studentName:name,id:Store.uid(),date:targetDate.toDateStr(),startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,plannedFee:80,campusId:null,actualFee:null,status:'scheduled',isAdjusted:false,notes:note||''});
     }
   });
 
@@ -718,12 +746,12 @@ function showAdHocLesson(){
   const students=Store.students().filter(s=>s.isActive!==false);
   const body=`<div class="form-sect"><h3>临时加课 / 试课</h3>
     <label>学生</label>
-    <select id="ef-ah-stu"><option value="" data-fee="100">选择学生（或输入新名字）</option>${students.map(s=>`<option value="${s.id}" data-fee="${s.defaultFee||Store.getCourseFee(s.courseType||'private')}">${s.name} - ¥${s.defaultFee||Store.getCourseFee(s.courseType||'private')}/节</option>`).join('')}</select>
+    <select id="ef-ah-stu"><option value="" data-fee="80">选择学生（或输入新名字）</option>${students.map(s=>`<option value="${s.id}" data-fee="${s.defaultFee||Store.getCourseFee(s.courseType||'institution')}">${s.name} - ¥${s.defaultFee||Store.getCourseFee(s.courseType||'institution')}/节</option>`).join('')}</select>
     <label style="margin-top:8px">新学生名（如试课学生，留空则用上面选的）</label><input id="ef-ah-new" placeholder="新学生姓名">
     <label style="margin-top:8px">日期</label><input id="ef-ah-date" type="date" value="${ds}">
     <div class="form-row" style="margin-top:8px"><div><label>开始</label><div class="form-row fixed"><input id="ef-ah-sh" type="number" value="${new Date().getHours()}" min="6" max="22" style="width:50px;padding:6px">:<input id="ef-ah-sm" type="number" value="0" min="0" max="45" step="15" style="width:50px;padding:6px"></div></div><div><label>结束</label><div class="form-row fixed"><input id="ef-ah-eh" type="number" value="${new Date().getHours()+1}" min="6" max="22" style="width:50px;padding:6px">:<input id="ef-ah-em" type="number" value="0" min="0" max="45" step="15" style="width:50px;padding:6px"></div></div></div>
     <label style="margin-top:8px">地点</label><input id="ef-ah-loc" placeholder="上课地点">
-    <label style="margin-top:8px">课时费 ¥ <span style="font-size:12px;color:var(--sec)">（选学生自动填）</span></label><input id="ef-ah-fee" type="number" value="100">
+    <label style="margin-top:8px">课时费 ¥ <span style="font-size:12px;color:var(--sec)">（选学生自动填）</span></label><input id="ef-ah-fee" type="number" value="80">
     <label style="margin-top:8px">备注</label><input id="ef-ah-note" placeholder="试课/加课等">
   </div>`;
   showSheet('添加课程',body,overlay=>{
@@ -734,7 +762,7 @@ function showAdHocLesson(){
     let studentId=stuId;
     if(newName){
       // Create new student on the fly
-      const s={id:Store.uid(),name:newName,parentContact:'',courseType:'private',defaultLocation:overlay.querySelector('#ef-ah-loc').value.trim(),defaultFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||100,defaultCampusId:null,schedules:[],isActive:true,notes:'试课'};
+      const s={id:Store.uid(),name:newName,parentContact:'',courseType:'institution',defaultLocation:overlay.querySelector('#ef-ah-loc').value.trim(),defaultFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||80,defaultCampusId:null,schedules:[],isActive:true,notes:'试课'};
       const students=Store.students();students.push(s);Store.saveStudents(students);
       studentId=s.id;
     }
@@ -744,7 +772,7 @@ function showAdHocLesson(){
       id:Store.uid(),studentId,date:overlay.querySelector('#ef-ah-date').value,
       startHour:parseInt(overlay.querySelector('#ef-ah-sh').value),startMinute:parseInt(overlay.querySelector('#ef-ah-sm').value),
       endHour:parseInt(overlay.querySelector('#ef-ah-eh').value),endMinute:parseInt(overlay.querySelector('#ef-ah-em').value),
-      location:overlay.querySelector('#ef-ah-loc').value.trim(),plannedFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||100,
+      location:overlay.querySelector('#ef-ah-loc').value.trim(),plannedFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||80,
       campusId:null,actualFee:null,status:'scheduled',isAdjusted:true,notes:overlay.querySelector('#ef-ah-note').value.trim()
     });
     Store.saveLessons(lessons);
@@ -783,19 +811,19 @@ function showStudentEdit(student){
       <input data-sch-sm="${i}" type="number" value="${sc.startMinute||0}" min="0" max="45" step="15" style="width:42px;padding:4px">-
       <input data-sch-eh="${i}" type="number" value="${sc.endHour}" min="6" max="22" style="width:42px;padding:4px">:
       <input data-sch-em="${i}" type="number" value="${sc.endMinute||0}" min="0" max="45" step="15" style="width:42px;padding:4px">
-       ¥<input data-sch-fee="${i}" type="number" value="${sc.fee||0}" placeholder="${s.defaultFee||100}" style="width:50px;padding:4px">
+       ¥<input data-sch-fee="${i}" type="number" value="${sc.fee||0}" placeholder="${s.defaultFee||80}" style="width:50px;padding:4px">
       <button data-del-sch="${i}" style="color:var(--red);font-size:18px">×</button>
     </div>`;
   });
   schsHtml+='</div><button class="btn btn-ghost btn-sm" id="btn-add-sch">+ 添加时间段</button>';
 
-  const ct=s.courseType||'private';
+  const ct=s.courseType||'institution';
   const body=`<div class="form-sect"><h3>基本信息</h3>
     <label>姓名</label><input id="ef-name" value="${s.name||''}" placeholder="学生姓名">
     <label style="margin-top:8px">家长联系方式</label><input id="ef-contact" value="${s.parentContact||''}" placeholder="手机号（选填）">
     <label style="margin-top:8px">课程类型</label><select id="ef-type">
-      <option value="private" ${ct==='private'?'selected':''}>家教课 (¥${Store.getCourseFee('private')}/节)</option>
       <option value="institution" ${ct==='institution'?'selected':''}>机构课 (¥${Store.getCourseFee('institution')}/节)</option>
+      <option value="private" ${ct==='private'?'selected':''}>家教课 (¥${Store.getCourseFee('private')}/节)</option>
       <option value="practice" ${ct==='practice'?'selected':''}>陪练课 (¥${Store.getCourseFee('practice')}/节)</option>
     </select>
     <label style="margin-top:8px">课时费 ¥/节 <span style="font-weight:400;font-size:12px">（改类型自动填，也可手动改）</span></label><input id="ef-fee" type="number" value="${s.defaultFee||Store.getCourseFee(ct)}" placeholder="${Store.getCourseFee(ct)}">
@@ -933,7 +961,7 @@ function bindEvents(){
   $$('.segmented button').forEach(el=>{el.onclick=()=>{dayWeekMode=el.dataset.mode;render();};});
   const eb=$('#btn-export');if(eb)eb.onclick=exportWeekImage;
   const al=$('#btn-add-lesson');if(al)al.onclick=showAdHocLesson;
-  const schEl=$('#search-students');if(schEl){schEl.oninput=()=>{studentFilter=schEl.value;render();};}
+  const schEl=$('#search-students');if(schEl){schEl.oninput=()=>{studentFilter=schEl.value;render();setTimeout(()=>{const si=$('#search-students');if(si){si.focus();si.setSelectionRange(si.value.length,si.value.length);}},50);};}
   $$('#campus-filter .filter-pill').forEach(el=>{el.onclick=()=>{studentCampusFilter=el.dataset.campus;render();};});
   const addStu=$('#btn-add-student');if(addStu)addStu.onclick=()=>showStudentEdit();
   $$('.student-row[data-student]').forEach(el=>{el.onclick=()=>renderStudentDetail(el.dataset.student);});
@@ -971,7 +999,7 @@ function loadDemoData(){
   const c1=Store.uid();
   Store.saveCampuses([{id:c1,name:'总店',address:'',coords:null}]);
   const stu=Store.uid();
-  Store.saveStudents([{id:stu,name:'示例学生',parentContact:'',courseType:'private',defaultLocation:'',defaultFee:100,defaultCampusId:c1,schedules:[{weekday:1,startHour:10,startMinute:0,endHour:11,endMinute:0,location:'',fee:100,campusId:c1}],isActive:true,notes:''}]);
+  Store.saveStudents([{id:stu,name:'示例学生',parentContact:'',courseType:'institution',defaultLocation:'',defaultFee:80,defaultCampusId:c1,schedules:[{weekday:1,startHour:10,startMinute:0,endHour:11,endMinute:0,location:'',fee:80,campusId:c1}],isActive:true,notes:''}]);
   generateLessons();
   toast('已加载示例数据，请用导入功能加载真实课表');
   render();
@@ -981,9 +1009,15 @@ function loadDemoData(){
 // 数据迁移：检测旧版格式并清除
 const oldData=Store.get('students');
 if(oldData&&oldData.length>0&&oldData[0].hasSchedule!==undefined&&!oldData[0].schedules){
-  // 旧版数据格式，不支持 schedules 数组，清除
-  localStorage.clear();
+  try{localStorage.clear()}catch(e){}
 }
+// 自动修复旧数据中的 ¥200 异常价格
+const fixStudents=Store.students(),fixLessons=Store.lessons();
+let fixedL=0,fixedS=0;
+fixStudents.forEach(s=>{if(s.defaultFee>=200){s.defaultFee=80;fixedS++;}});
+fixLessons.forEach(l=>{if(l.plannedFee>=200){const stu=fixStudents.find(s=>s.id===l.studentId);l.plannedFee=stu?.defaultFee||80;fixedL++;}});
+if(fixedS>0)Store.saveStudents(fixStudents);
+if(fixedL>0)Store.saveLessons(fixLessons);
 // 首次使用自动弹出导入窗口
 if(!Store.campuses().length||!Store.students().length){
   setTimeout(()=>showImport(),500);
