@@ -646,7 +646,12 @@ function showImport(){
         const oldSchs=exist.schedules||[];
         (newStu.schedules||[]).forEach(ns=>{
           const dup=oldSchs.find(s=>s.weekday===ns.weekday&&s.startHour===ns.startHour&&s.startMinute===ns.startMinute);
-          if(!dup) oldSchs.push(ns);
+          if(dup){
+            // Update existing schedule with new location if import has it
+            if(ns.location) dup.location=ns.location;
+          }else{
+            oldSchs.push(ns);
+          }
         });
         exist.schedules=oldSchs;
         // Restore notes from import if they have useful info (请假/停课/未定等)
@@ -661,6 +666,18 @@ function showImport(){
       }
     });
     Store.saveStudents(existingStudents);
+    // Update existing future lessons with locations from import
+    const todayStr=C.today().toDateStr();
+    existingLessons.forEach(l=>{
+      if(l.date>=todayStr&&l.status==='scheduled'&&!l.location){
+        const stu=existingStudents.find(s=>s.id===l.studentId);
+        if(stu&&stu.schedules){
+          const d=new Date(l.date);
+          const sch=stu.schedules.find(s=>s.weekday===d.getDay()&&s.startHour===l.startHour&&s.startMinute===l.startMinute);
+          if(sch&&sch.location) l.location=sch.location;
+        }
+      }
+    });
     result.lessons.forEach(newL=>{
       const stu=existingStudents.find(s=>s.name===newL.studentName);
       if(!stu) return;
