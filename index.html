@@ -833,20 +833,20 @@ function showStudentEdit(student){
       notes:overlay.querySelector('#ef-notes').value.trim(),
     };
     const students=Store.students();const idx=students.findIndex(x=>x.id===data.id);
-    const oldFee=idx>=0?students[idx].defaultFee:null;
     if(idx>=0) students[idx]=data;else students.push(data);
+    // 排课价格全部归零 = 跟随学生默认价格
+    data.schedules.forEach(sc=>{sc.fee=0;});
     Store.saveStudents(students);
-    // Change course type → sync all future scheduled lessons and schedule fees
+    // 每次保存都同步该学生所有未来课程的价格
     const todayStr=C.today().toDateStr();
-    if(oldFee!=null&&Math.abs((oldFee||0)-(data.defaultFee||0))>0.1){
-      const lessons=Store.lessons();
-      let updated=0;
-      lessons.forEach(l=>{if(l.studentId===data.id&&l.status==='scheduled'&&l.date>=todayStr&&l.plannedFee!==data.defaultFee){l.plannedFee=data.defaultFee;updated++;}});
-      Store.saveLessons(lessons);
-      // Also update schedule fees to match
-      data.schedules.forEach(sc=>{sc.fee=0;}); // 0 = use student defaultFee
-      if(updated>0) setTimeout(()=>toast(`已同步更新 ${updated} 节课的价格为 ¥${data.defaultFee}`),300);
-    }
+    const lessons=Store.lessons();
+    let updated=0;
+    lessons.forEach(l=>{
+      if(l.studentId===data.id&&l.status==='scheduled'&&l.date>=todayStr&&l.plannedFee!==data.defaultFee){
+        l.plannedFee=data.defaultFee;updated++;
+      }
+    });
+    if(updated>0){Store.saveLessons(lessons);toast(`已同步 ${updated} 节课 → ¥${data.defaultFee}/节`);}
     generateLessons();return true;
   });
 
