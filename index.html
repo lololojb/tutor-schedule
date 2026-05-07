@@ -126,6 +126,10 @@ const Store={
   saveStudents(v){this.set('students',v)},
   lessons(){return this.get('lessons')||[]},
   saveLessons(v){this.set('lessons',v)},
+  // Course type defaults
+  courseTypes(){return this.get('courseTypes')||{private:100,institution:80,practice:75}},
+  saveCourseTypes(v){this.set('courseTypes',v)},
+  getCourseFee(type){const types=this.courseTypes();return types[type]||100;},
   // Map cache
   geocode(k){return this.get('geo_'+k)},
   setGeocode(k,v){this.set('geo_'+k,v)},
@@ -152,6 +156,8 @@ const C={
 };
 
 Date.prototype.toDateStr=function(){return`${this.getFullYear()}-${String(this.getMonth()+1).padStart(2,'0')}-${String(this.getDate()).padStart(2,'0')}`;};
+const COURSE_TYPES={private:'家教课',institution:'机构课',practice:'陪练课'};
+function courseTypeName(t){return COURSE_TYPES[t]||'家教课';}
 
 // ==================== MAP / COMMUTE ====================
 async function geocodeAddr(addr){
@@ -444,7 +450,7 @@ function renderStudents(){
       html+=`<div class="student-row" data-student="${s.id}">
         <div class="av" style="background:${s.isActive===false?'#8e8e93':'var(--blue)'}">${s.name[0]}</div>
         <div class="info"><div class="nm">${s.name}${s.isActive===false?' (已停用)':''}</div>
-        <div class="sub">${schs||'未设置排课'} · ¥${s.defaultFee||0}/节${campus?' · '+campus.name:''}</div></div>
+        <div class="sub"><span class="sch-chip" style="font-size:10px;padding:1px 6px">${courseTypeName(s.courseType||'private')}</span> ${schs||'未设置排课'} · ¥${s.defaultFee||0}/节${campus?' · '+campus.name:''}</div></div>
         <span style="color:var(--sec)">›</span></div>`;
     });
     html+='</div>';
@@ -468,7 +474,7 @@ function renderStudentDetail(sid){
       ${s.parentContact?`<p style="color:var(--sec);margin-top:4px">📱 ${s.parentContact}</p>`:''}
       ${s.defaultLocation?`<p style="color:var(--sec)">📍 ${s.defaultLocation}</p>`:''}
       ${campus?`<p style="color:var(--sec)">🏫 ${campus.name}</p>`:''}
-      <p style="color:var(--sec)">💰 ¥${s.defaultFee||0}/节</p>
+      <p style="color:var(--sec)">📋 ${courseTypeName(s.courseType||'private')} · 💰 ¥${s.defaultFee||0}/节</p>
     </div>
 
     <h3 style="margin-top:20px;font-size:15px;font-weight:600">每周排课</h3>`;
@@ -541,7 +547,14 @@ function renderFinance(){
 function renderSettings(){
   const campuses=Store.campuses();
   const students=Store.students();
-  let html=`<div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">校区管理</h3>`;
+  const ct=Store.courseTypes();
+  let html=`<div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">课程类型默认价格</h3>
+    <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--sep)"><span style="flex:1">🏠 家教课</span>¥<input id="set-fee-private" type="number" value="${ct.private||100}" style="width:70px;padding:6px;text-align:center">/节</div>
+    <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--sep)"><span style="flex:1">🏫 机构课</span>¥<input id="set-fee-institution" type="number" value="${ct.institution||80}" style="width:70px;padding:6px;text-align:center">/节</div>
+    <div style="display:flex;align-items:center;padding:8px 0"><span style="flex:1">🎹 陪练课</span>¥<input id="set-fee-practice" type="number" value="${ct.practice||75}" style="width:70px;padding:6px;text-align:center">/节</div>
+    <button class="btn btn-ghost btn-sm" id="btn-save-types" style="margin-top:8px">保存默认价格</button>
+  </div>
+  <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">校区管理</h3>`;
   campuses.forEach(c=>{html+=`<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--sep)"><div style="flex:1"><div style="font-weight:500">🏫 ${c.name}</div><div style="font-size:13px;color:var(--sec)">${c.address||''}</div></div><button class="btn btn-ghost btn-sm" data-edit-campus="${c.id}">编辑</button><button class="btn btn-ghost btn-sm" data-del-campus="${c.id}" style="color:var(--red)">删</button></div>`;});
   html+=`<button class="btn btn-ghost btn-block" id="btn-add-campus" style="margin-top:8px">+ 添加校区</button></div>`;
 
@@ -661,7 +674,7 @@ function parseSchedule(text){
     const existingStu=students.find(s=>s.name===name);
     if(!existingStu){
       students.push({
-        id:Store.uid(),name,parentContact:'',defaultLocation:location,defaultFee:200,
+        id:Store.uid(),name,parentContact:'',courseType:'private',defaultLocation:location,defaultFee:200,
         defaultCampusId:null,isActive:!isSuspended,notes:note,
         schedules:isSuspended?[]:[{weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:200,campusId:null}]
       });
@@ -705,12 +718,12 @@ function showAdHocLesson(){
   const students=Store.students().filter(s=>s.isActive!==false);
   const body=`<div class="form-sect"><h3>临时加课 / 试课</h3>
     <label>学生</label>
-    <select id="ef-ah-stu"><option value="">选择学生（或输入新名字）</option>${students.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}</select>
+    <select id="ef-ah-stu"><option value="" data-fee="100">选择学生（或输入新名字）</option>${students.map(s=>`<option value="${s.id}" data-fee="${s.defaultFee||Store.getCourseFee(s.courseType||'private')}">${s.name} - ¥${s.defaultFee||Store.getCourseFee(s.courseType||'private')}/节</option>`).join('')}</select>
     <label style="margin-top:8px">新学生名（如试课学生，留空则用上面选的）</label><input id="ef-ah-new" placeholder="新学生姓名">
     <label style="margin-top:8px">日期</label><input id="ef-ah-date" type="date" value="${ds}">
     <div class="form-row" style="margin-top:8px"><div><label>开始</label><div class="form-row fixed"><input id="ef-ah-sh" type="number" value="${new Date().getHours()}" min="6" max="22" style="width:50px;padding:6px">:<input id="ef-ah-sm" type="number" value="0" min="0" max="45" step="15" style="width:50px;padding:6px"></div></div><div><label>结束</label><div class="form-row fixed"><input id="ef-ah-eh" type="number" value="${new Date().getHours()+1}" min="6" max="22" style="width:50px;padding:6px">:<input id="ef-ah-em" type="number" value="0" min="0" max="45" step="15" style="width:50px;padding:6px"></div></div></div>
     <label style="margin-top:8px">地点</label><input id="ef-ah-loc" placeholder="上课地点">
-    <label style="margin-top:8px">课时费 ¥</label><input id="ef-ah-fee" type="number" value="200">
+    <label style="margin-top:8px">课时费 ¥ <span style="font-size:12px;color:var(--sec)">（选学生自动填）</span></label><input id="ef-ah-fee" type="number" value="100">
     <label style="margin-top:8px">备注</label><input id="ef-ah-note" placeholder="试课/加课等">
   </div>`;
   showSheet('添加课程',body,overlay=>{
@@ -721,7 +734,7 @@ function showAdHocLesson(){
     let studentId=stuId;
     if(newName){
       // Create new student on the fly
-      const s={id:Store.uid(),name:newName,parentContact:'',defaultLocation:overlay.querySelector('#ef-ah-loc').value.trim(),defaultFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||200,defaultCampusId:null,schedules:[],isActive:true,notes:'试课'};
+      const s={id:Store.uid(),name:newName,parentContact:'',courseType:'private',defaultLocation:overlay.querySelector('#ef-ah-loc').value.trim(),defaultFee:parseInt(overlay.querySelector('#ef-ah-fee').value)||100,defaultCampusId:null,schedules:[],isActive:true,notes:'试课'};
       const students=Store.students();students.push(s);Store.saveStudents(students);
       studentId=s.id;
     }
@@ -738,6 +751,14 @@ function showAdHocLesson(){
     toast('✅ 课程已添加');
     return true;
   });
+  // Auto-fill fee when student selected
+  setTimeout(()=>{
+    const sel=$('#ef-ah-stu');
+    if(sel) sel.onchange=()=>{
+      const opt=sel.options[sel.selectedIndex];
+      if(opt&&opt.dataset.fee) $('#ef-ah-fee').value=opt.dataset.fee;
+    };
+  },100);
 }
 
 // ==================== SHEETS ====================
@@ -768,10 +789,16 @@ function showStudentEdit(student){
   });
   schsHtml+='</div><button class="btn btn-ghost btn-sm" id="btn-add-sch">+ 添加时间段</button>';
 
+  const ct=s.courseType||'private';
   const body=`<div class="form-sect"><h3>基本信息</h3>
     <label>姓名</label><input id="ef-name" value="${s.name||''}" placeholder="学生姓名">
     <label style="margin-top:8px">家长联系方式</label><input id="ef-contact" value="${s.parentContact||''}" placeholder="手机号（选填）">
-    <label style="margin-top:8px">默认课时费 ¥/节</label><input id="ef-fee" type="number" value="${s.defaultFee||''}" placeholder="200">
+    <label style="margin-top:8px">课程类型</label><select id="ef-type">
+      <option value="private" ${ct==='private'?'selected':''}>家教课 (¥${Store.getCourseFee('private')}/节)</option>
+      <option value="institution" ${ct==='institution'?'selected':''}>机构课 (¥${Store.getCourseFee('institution')}/节)</option>
+      <option value="practice" ${ct==='practice'?'selected':''}>陪练课 (¥${Store.getCourseFee('practice')}/节)</option>
+    </select>
+    <label style="margin-top:8px">课时费 ¥/节 <span style="font-weight:400;font-size:12px">（改类型自动填，也可手动改）</span></label><input id="ef-fee" type="number" value="${s.defaultFee||Store.getCourseFee(ct)}" placeholder="${Store.getCourseFee(ct)}">
     <label style="margin-top:8px">默认校区</label><select id="ef-campus"><option value="">无</option>${campuses.map(c=>`<option value="${c.id}" ${s.defaultCampusId===c.id?'selected':''}>${c.name}</option>`).join('')}</select>
     <label style="margin-top:8px">默认地点</label><input id="ef-loc" value="${s.defaultLocation||''}" placeholder="如B座302（选填，优先级低于排课地点）">
   </div>
@@ -798,6 +825,7 @@ function showStudentEdit(student){
     const data={
       id:s.id||Store.uid(),name,
       parentContact:overlay.querySelector('#ef-contact').value.trim(),
+      courseType:overlay.querySelector('#ef-type').value||'private',
       defaultLocation:overlay.querySelector('#ef-loc').value.trim(),
       defaultFee:parseInt(overlay.querySelector('#ef-fee').value)||0,
       defaultCampusId:overlay.querySelector('#ef-campus').value||null,
@@ -810,6 +838,12 @@ function showStudentEdit(student){
   });
 
   setTimeout(()=>{
+    // Auto-set fee when course type changes
+    const typeSel=$('#ef-type');
+    const feeInput=$('#ef-fee');
+    if(typeSel&&feeInput){
+      typeSel.onchange=()=>{feeInput.value=Store.getCourseFee(typeSel.value);};
+    }
     $('#btn-add-sch').onclick=()=>{
       const list=$('#sch-list');
       const i=list.children.length;
@@ -892,6 +926,7 @@ function bindEvents(){
   const pm=$('#btn-pm');if(pm)pm.onclick=()=>{financeMonth.setMonth(financeMonth.getMonth()-1);render();};
   const nm=$('#btn-nm');if(nm)nm.onclick=()=>{financeMonth.setMonth(financeMonth.getMonth()+1);render();};
   const ac=$('#btn-add-campus');if(ac)ac.onclick=()=>showCampusEdit();
+  const st=$('#btn-save-types');if(st)st.onclick=()=>{Store.saveCourseTypes({private:parseInt($('#set-fee-private').value)||100,institution:parseInt($('#set-fee-institution').value)||80,practice:parseInt($('#set-fee-practice').value)||75});toast('默认价格已保存 ✓');};
   $$('[data-edit-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const c=Store.campuses().find(x=>x.id===el.dataset.editCampus);if(c)showCampusEdit(c);};});
   $$('[data-del-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();if(confirm('删除该校区？')){Store.saveCampuses(Store.campuses().filter(x=>x.id!==el.dataset.delCampus));render();}};});
   const ib=$('#btn-import');if(ib)ib.onclick=showImport;
@@ -918,7 +953,7 @@ function loadDemoData(){
   const c1=Store.uid();
   Store.saveCampuses([{id:c1,name:'总店',address:'',coords:null}]);
   const stu=Store.uid();
-  Store.saveStudents([{id:stu,name:'示例学生',parentContact:'',defaultLocation:'',defaultFee:200,defaultCampusId:c1,schedules:[{weekday:1,startHour:10,startMinute:0,endHour:11,endMinute:0,location:'',fee:200,campusId:c1}],isActive:true,notes:''}]);
+  Store.saveStudents([{id:stu,name:'示例学生',parentContact:'',courseType:'private',defaultLocation:'',defaultFee:100,defaultCampusId:c1,schedules:[{weekday:1,startHour:10,startMinute:0,endHour:11,endMinute:0,location:'',fee:100,campusId:c1}],isActive:true,notes:''}]);
   generateLessons();
   toast('已加载示例数据，请用导入功能加载真实课表');
   render();
