@@ -192,6 +192,19 @@ async function geocodeAddr(addr){
   return null;
 }
 
+// GPS
+let gpsPos=null;
+function getGPS(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){resolve(null);return;}
+    navigator.geolocation.getCurrentPosition(
+      pos=>{gpsPos={lat:pos.coords.latitude,lng:pos.coords.longitude};resolve(gpsPos);},
+      ()=>{resolve(null);},
+      {enableHighAccuracy:true,timeout:8000,maximumAge:300000}
+    );
+  });
+}
+
 async function calcCommute(fromAddr,toAddr){
   if(!fromAddr||!toAddr||fromAddr===toAddr) return 0;
   const key=`${fromAddr}|${toAddr}`;
@@ -204,6 +217,26 @@ async function calcCommute(fromAddr,toAddr){
 
   try{
     const url=`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`;
+    const resp=await fetch(url);
+    const data=await resp.json();
+    if(data.routes&&data.routes.length>0){
+      const mins=Math.round(data.routes[0].duration/60);
+      Store.setRoute(key,mins);
+      return mins;
+    }
+  }catch(e){console.warn('Route fail:',e)}
+  return 0;
+}
+
+async function calcCommuteByCoords(fromLat,fromLng,toAddr){
+  if(!fromLat||!fromLng||!toAddr) return 0;
+  const to=await geocodeAddr(toAddr);
+  if(!to) return 0;
+  const key=`gps|${fromLat.toFixed(4)},${fromLng.toFixed(4)}|${to.lat.toFixed(4)},${to.lng.toFixed(4)}`;
+  const cached=Store.route(key);
+  if(cached!==null) return cached;
+  try{
+    const url=`https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${to.lng},${to.lat}?overview=false`;
     const resp=await fetch(url);
     const data=await resp.json();
     if(data.routes&&data.routes.length>0){
@@ -412,6 +445,35 @@ function renderWeekView(){
 
 async function calcAndShowCommute(){
   const lessons=getDayLessons(selectedDate);
+  if(lessons.length===0) return;
+  // Get GPS if not already
+  if(!gpsPos) await getGPS();
+
+  const campuses=Store.campuses();
+
+  // GPS → first lesson
+  if(gpsPos&&lessons.length>0){
+    const first=lessons[0];
+    const cA=campuses.find(c=>c.id===first.campusId);
+    const toAddr=cA?.address||first.location;
+    if(toAddr){
+      const toName=cA?.name||first.location||'上课地点';
+      const fAddr=toAddr.includes('深圳')?toAddr:'深圳'+toAddr;
+      const gpsTime=await calcCommuteByCoords(gpsPos.lat,gpsPos.lng,fAddr);
+      if(gpsTime>0){
+        const metroTime=Math.round(gpsTime*1.1);
+        const now=new Date();const nowMin=now.getHours()*60+now.getMinutes();
+        const firstStartMin=first.startHour*60+first.startMinute;
+        const available=firstStartMin-nowMin;
+        const el=document.createElement('div');
+        el.className='commute-bar '+(metroTime>available?'error':'ok');
+        el.innerHTML=`📍 <b>从我出发</b> → ${toName} 🚇约${metroTime}min · 现在${fmt.time(now.getHours(),now.getMinutes())} · ${metroTime>available?'⚠️ 现在出发可能来不及！':'来得及'}`;
+        const firstCard=document.querySelector('.lesson-card');
+        if(firstCard) firstCard.insertAdjacentElement('beforebegin',el);
+      }
+    }
+  }
+
   if(lessons.length<2) return;
   const commutes=await calcAllCommutes(lessons);
   $$('[data-commute]').forEach(el=>{
@@ -420,22 +482,25 @@ async function calcAndShowCommute(){
     const gap=(b.startHour*60+b.startMinute)-(a.endHour*60+a.endMinute);
     const commuteNeed=commutes[i]||0;
     el.style.display='flex';
-    const metroNeed=Math.round(commuteNeed*1.1); // 地铁≈驾车时间，略加换乘
+    const metroNeed=Math.round(commuteNeed*1.1);
+    const cA=campuses.find(c=>c.id===a.campusId);
+    const cB=campuses.find(c=>c.id===b.campusId);
+    const locA=cA?.name||a.location||'A',locB=cB?.name||b.location||'B';
     if(commuteNeed===0){
       el.className='commute-bar ok';
-      el.textContent=`📍 同区域 · 间隔${gap}分钟`;
+      el.textContent=`📍 ${locA}→${locB} 同区域 · 间隔${gap}min`;
     }else if(commuteNeed>gap){
       el.className='commute-bar error';
-      el.textContent=`🚇 地铁约${metroNeed}min ≥ 间隔${gap}min，来不及！点地点换导航看路线`;
+      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min ≥ 间隔${gap}min，来不及！`;
     }else if(metroNeed>gap){
       el.className='commute-bar info';
-      el.textContent=`🚇 地铁约${metroNeed}min，间隔仅${gap}min，建议${fmt.time(b.startHour,b.startMinute-metroNeed)}前出发`;
+      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min，间隔仅${gap}min，建议${fmt.time(b.startHour,b.startMinute-metroNeed)}前出发`;
     }else if(gap-commuteNeed<15){
       el.className='commute-bar info';
-      el.textContent=`🚇 地铁约${metroNeed}min · 间隔${gap}min · 建议${fmt.time(b.startHour,b.startMinute-metroNeed)}出发`;
+      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min · 间隔${gap}min · 建议${fmt.time(b.startHour,b.startMinute-metroNeed)}出发`;
     }else{
       el.className='commute-bar ok';
-      el.textContent=`🚇 地铁约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
+      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
     }
   });
 }
