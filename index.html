@@ -105,8 +105,10 @@ label{font-size:13px;color:var(--sec);display:block;margin-bottom:4px}
 .sch-chip .del{font-size:14px;cursor:pointer;opacity:.6}
 .sch-chip .del:hover{opacity:1}
 .commute-auto{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--green);margin-top:4px}
-.filter-pill{padding:5px 12px;border-radius:14px;font-size:13px;background:var(--card);color:var(--sec);border:1px solid transparent}
+.filter-pill{padding:5px 12px;border-radius:14px;font-size:13px;background:var(--card);color:var(--sec);border:1px solid transparent;white-space:nowrap;cursor:pointer}
 .filter-pill.active{background:#007AFF12;color:var(--blue);border-color:var(--blue)}
+.filter-row{display:flex;overflow-x:auto;padding:4px 16px 8px;gap:6px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.filter-row::-webkit-scrollbar{display:none}
 </style>
 </head>
 <body>
@@ -164,31 +166,29 @@ function courseTypeName(t){return COURSE_TYPES[t]||'家教课';}
 
 // ==================== MAP / COMMUTE ====================
 function openGaodeNav(loc,campusId){
-  const campuses=Store.campuses();const c=campuses.find(x=>x.id===campusId);
-  const coords=c?.coords;const fullAddr=c?.address||loc;
+  const c=Store.campuses().find(x=>x.id===campusId);
+  const coords=c?.coords;
   if(coords){
     window.open(`https://uri.amap.com/navigation?to=${coords.lng},${coords.lat},${encodeURIComponent(c.name)}&mode=transit`,'_blank');
-  }else if(fullAddr){
-    window.open(`https://uri.amap.com/search?keyword=${encodeURIComponent('深圳'+fullAddr)}`,'_blank');
   }else{
-    window.open(`https://uri.amap.com/search?keyword=${encodeURIComponent('深圳'+loc)}`,'_blank');
+    window.open(`https://uri.amap.com/search?keyword=${encodeURIComponent('深圳'+(c?.address||loc))}`,'_blank');
   }
 }
 
 async function geocodeAddr(addr){
   if(!addr) return null;
   const fullAddr=addr.includes('深圳')?addr:'深圳'+addr;
-  const cached=Store.geocode(fullAddr);
+  let cached=Store.geocode(fullAddr);
   if(cached) return cached;
   try{
-    const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&limit=1`);
+    const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddr)}&limit=1`);
     const data=await resp.json();
     if(data.length>0){
       const r={lat:parseFloat(data[0].lat),lng:parseFloat(data[0].lon)};
-      Store.setGeocode(addr,r);
+      Store.setGeocode(fullAddr,r);
       return r;
     }
-  }catch(e){console.warn('Geocode fail:',e)}
+  }catch(e){}
   return null;
 }
 
@@ -205,61 +205,47 @@ function getGPS(){
   });
 }
 
-async function calcCommute(fromAddr,toAddr){
-  if(!fromAddr||!toAddr||fromAddr===toAddr) return 0;
-  const key=`${fromAddr}|${toAddr}`;
+// Unified commute: from=addr string OR {lat,lng} object
+async function calcRoute(from,toAddr){
+  if(!toAddr) return 0;
+  let key,url;
+  if(typeof from==='object'&&from.lat){
+    const to=await geocodeAddr(toAddr);
+    if(!to) return 0;
+    key=`gps|${from.lat.toFixed(4)},${from.lng.toFixed(4)}|${to.lat.toFixed(4)},${to.lng.toFixed(4)}`;
+    url=`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`;
+  }else{
+    if(!from||from===toAddr) return 0;
+    const [f,t]=await Promise.all([geocodeAddr(from),geocodeAddr(toAddr)]);
+    if(!f||!t) return 0;
+    key=`${from}|${toAddr}`;
+    url=`https://router.project-osrm.org/route/v1/driving/${f.lng},${f.lat};${t.lng},${t.lat}?overview=false`;
+  }
   const cached=Store.route(key);
   if(cached!==null) return cached;
-
-  const from=await geocodeAddr(fromAddr);
-  const to=await geocodeAddr(toAddr);
-  if(!from||!to) return 0;
-
   try{
-    const url=`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`;
     const resp=await fetch(url);
     const data=await resp.json();
-    if(data.routes&&data.routes.length>0){
+    if(data.routes?.length){
       const mins=Math.round(data.routes[0].duration/60);
       Store.setRoute(key,mins);
       return mins;
     }
-  }catch(e){console.warn('Route fail:',e)}
+  }catch(e){}
   return 0;
 }
 
-async function calcCommuteByCoords(fromLat,fromLng,toAddr){
-  if(!fromLat||!fromLng||!toAddr) return 0;
-  const to=await geocodeAddr(toAddr);
-  if(!to) return 0;
-  const key=`gps|${fromLat.toFixed(4)},${fromLng.toFixed(4)}|${to.lat.toFixed(4)},${to.lng.toFixed(4)}`;
-  const cached=Store.route(key);
-  if(cached!==null) return cached;
-  try{
-    const url=`https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${to.lng},${to.lat}?overview=false`;
-    const resp=await fetch(url);
-    const data=await resp.json();
-    if(data.routes&&data.routes.length>0){
-      const mins=Math.round(data.routes[0].duration/60);
-      Store.setRoute(key,mins);
-      return mins;
-    }
-  }catch(e){console.warn('Route fail:',e)}
-  return 0;
+function addrFor(a){
+  const c=Store.campuses().find(x=>x.id===a.campusId);
+  const raw=c?.address||a.location||'';
+  return raw&&!raw.includes('深圳')?'深圳'+raw:raw;
 }
 
 async function calcAllCommutes(lessons){
-  const campuses=Store.campuses();
   const results={};
   for(let i=0;i<lessons.length-1;i++){
-    const a=lessons[i], b=lessons[i+1];
-    const cA=campuses.find(c=>c.id===a.campusId);
-    const cB=campuses.find(c=>c.id===b.campusId);
-    let fromAddr=cA?.address||a.location;if(fromAddr&&!fromAddr.includes('深圳'))fromAddr='深圳'+fromAddr;
-    let toAddr=cB?.address||b.location;if(toAddr&&!toAddr.includes('深圳'))toAddr='深圳'+toAddr;
-    if(fromAddr&&toAddr&&(cA?.id!==cB?.id||!cA)){
-      results[i]=await calcCommute(fromAddr,toAddr);
-    }
+    const from=addrFor(lessons[i]),to=addrFor(lessons[i+1]);
+    if(from&&to) results[i]=await calcRoute(from,to);
   }
   return results;
 }
@@ -303,7 +289,7 @@ function generateLessons(){
     if(!stu||!stu.schedules||!stu.schedules.length) return l.status!=='scheduled';
     const d=new Date(l.date);
     const wd=d.getDay();
-    return stu.schedules.some(sch=>sch.weekday===wd)||l.status!=='scheduled';
+    return stu.schedules.some(sch=>sch.weekday===wd&&sch.startHour===l.startHour&&sch.startMinute===(l.startMinute||0))||l.status!=='scheduled';
   });
   Store.saveLessons(cleaned);
 }
@@ -366,8 +352,8 @@ function renderToday(){
     const monthScheduled=allLessons.filter(l=>l.date>=ms.toDateStr()&&l.date<me.toDateStr()&&l.status==='scheduled');
     const monthIncome=monthDone.reduce((s,l)=>s+(l.actualFee||l.plannedFee||0),0);
     // Weekly stats
-    const mon=C.monday(now);const monStr=mon.toDateStr();
-    const weekDone=allLessons.filter(l=>l.date>=monStr&&l.date<me.toDateStr()&&l.status==='completed');
+    const mon=C.monday(now);const monStr=mon.toDateStr();const weekEnd=C.addDays(mon,7).toDateStr();
+    const weekDone=allLessons.filter(l=>l.date>=monStr&&l.date<weekEnd&&l.status==='completed');
     html+=`<div class="summary-cards" style="margin-bottom:0">
       <div class="summary-card" style="padding:10px 14px"><div class="t">本周已上</div><div class="v blue" style="font-size:20px">${weekDone.length}节</div></div>
       <div class="summary-card" style="padding:10px 14px"><div class="t">本月已上</div><div class="v blue" style="font-size:20px">${monthDone.length}节</div></div>
@@ -375,6 +361,9 @@ function renderToday(){
       <div class="summary-card" style="padding:10px 14px"><div class="t">本月收入</div><div class="v green" style="font-size:20px">¥${monthIncome}</div></div>
     </div>`;
   }
+
+  // GPS/commute placeholder
+  html+=`<div id="gps-commute-bar" style="display:none;margin:0 16px 8px"></div>`;
 
   if(dayWeekMode==='week'){
     html+=renderWeekView();
@@ -396,7 +385,10 @@ function renderToday(){
               ${l.location||campus?`<div class="loc nav-loc" data-loc="${l.location||''}" data-campus="${l.campusId||''}" style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--blue);text-underline-offset:2px">🧭 ${l.location||campus?.name||''} → 导航</div>`:''}
               <span class="badge ${bc}" style="margin-top:4px">${bt}</span>
             </div>
-            <div class="fee-col"><div class="fee">¥${l.actualFee!=null?l.actualFee:l.plannedFee}</div></div>
+            <div class="fee-col">
+              <div class="fee">¥${l.actualFee!=null?l.actualFee:l.plannedFee}</div>
+              ${l.status==='scheduled'?`<button class="btn btn-sm" data-quick-done="${l.id}" style="color:var(--green);font-size:20px;padding:2px 6px;margin-top:4px">✓</button>`:''}
+            </div>
           </div>`;
         // Commute placeholder - filled async
         if(i<lessons.length-1){
@@ -413,7 +405,9 @@ function renderWeekView(){
   const ws=C.monday(selectedDate);
   const lessons=Store.lessons().filter(l=>l.status!=='cancelled'&&l.status!=='leave');
   let html=`<div style="display:flex;align-items:center;padding:8px 16px;gap:8px">
+    <button class="btn btn-ghost btn-sm" id="btn-prev-week">‹</button>
     <span style="font-weight:600;font-size:14px">${fmt.date(ws)} - ${fmt.date(C.addDays(ws,6))}</span>
+    <button class="btn btn-ghost btn-sm" id="btn-next-week">›</button>
     <span style="flex:1"></span>
     <button class="btn btn-sm btn-primary" id="btn-export">📷 导出</button>
   </div>`;
@@ -446,34 +440,30 @@ function renderWeekView(){
 async function calcAndShowCommute(){
   const lessons=getDayLessons(selectedDate);
   if(lessons.length===0) return;
-  // Get GPS if not already
-  if(!gpsPos) await getGPS();
-
-  const campuses=Store.campuses();
 
   // GPS → first lesson
-  if(gpsPos&&lessons.length>0){
-    const first=lessons[0];
-    const cA=campuses.find(c=>c.id===first.campusId);
-    const toAddr=cA?.address||first.location;
-    if(toAddr){
-      const toName=cA?.name||first.location||'上课地点';
-      const fAddr=toAddr.includes('深圳')?toAddr:'深圳'+toAddr;
-      const gpsTime=await calcCommuteByCoords(gpsPos.lat,gpsPos.lng,fAddr);
-      if(gpsTime>0){
-        const metroTime=Math.round(gpsTime*1.1);
-        const now=new Date();const nowMin=now.getHours()*60+now.getMinutes();
-        const firstStartMin=first.startHour*60+first.startMinute;
-        const available=firstStartMin-nowMin;
-        const el=document.createElement('div');
-        el.className='commute-bar '+(metroTime>available?'error':'ok');
-        el.innerHTML=`📍 <b>从我出发</b> → ${toName} 🚇约${metroTime}min · 现在${fmt.time(now.getHours(),now.getMinutes())} · ${metroTime>available?'⚠️ 现在出发可能来不及！':'来得及'}`;
-        const firstCard=document.querySelector('.lesson-card');
-        if(firstCard) firstCard.insertAdjacentElement('beforebegin',el);
+  const gpsBar=$('#gps-commute-bar');
+  if(gpsBar){
+    if(!gpsPos) await getGPS();
+    if(gpsPos){
+      const toAddr=addrFor(lessons[0]);
+      if(toAddr){
+        const gpsTime=await calcRoute(gpsPos,toAddr);
+        if(gpsTime>0){
+          const metroTime=Math.round(gpsTime*1.1);
+          const nowMin=new Date().getHours()*60+new Date().getMinutes();
+          const startMin=lessons[0].startHour*60+lessons[0].startMinute;
+          const available=startMin-nowMin;
+          const urgent=metroTime>available;
+          gpsBar.className='commute-bar '+(urgent?'error':'ok');
+          gpsBar.style.display='flex';
+          gpsBar.innerHTML=`📍 <b>从我出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min · 现在${fmt.time(new Date().getHours(),new Date().getMinutes())} · ${urgent?'⚠️ 出发可能来不及！':'来得及'}`;
+        }
       }
     }
   }
 
+  // Between-lesson commutes
   if(lessons.length<2) return;
   const commutes=await calcAllCommutes(lessons);
   $$('[data-commute]').forEach(el=>{
@@ -481,26 +471,21 @@ async function calcAndShowCommute(){
     const a=lessons[i],b=lessons[i+1];
     const gap=(b.startHour*60+b.startMinute)-(a.endHour*60+a.endMinute);
     const commuteNeed=commutes[i]||0;
-    el.style.display='flex';
     const metroNeed=Math.round(commuteNeed*1.1);
-    const cA=campuses.find(c=>c.id===a.campusId);
-    const cB=campuses.find(c=>c.id===b.campusId);
-    const locA=cA?.name||a.location||'A',locB=cB?.name||b.location||'B';
-    if(commuteNeed===0){
+    const locA=a.location||'A',locB=b.location||'B';
+    el.style.display='flex';
+    if(!commuteNeed){
       el.className='commute-bar ok';
-      el.textContent=`📍 ${locA}→${locB} 同区域 · 间隔${gap}min`;
+      el.textContent=`📍 ${locA}→${locB} · 间隔${gap}min`;
     }else if(commuteNeed>gap){
       el.className='commute-bar error';
-      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min ≥ 间隔${gap}min，来不及！`;
+      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min ≥ ${gap}min，来不及！`;
     }else if(metroNeed>gap){
       el.className='commute-bar info';
-      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min，间隔仅${gap}min，建议${fmt.time(b.startHour,b.startMinute-metroNeed)}前出发`;
-    }else if(gap-commuteNeed<15){
-      el.className='commute-bar info';
-      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min · 间隔${gap}min · 建议${fmt.time(b.startHour,b.startMinute-metroNeed)}出发`;
+      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min，仅${gap}min · 建议${fmt.time(b.startHour,b.startMinute-metroNeed)}出发`;
     }else{
       el.className='commute-bar ok';
-      el.textContent=`🚇 ${locA}→${locB} 地铁约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
+      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
     }
   });
 }
@@ -915,13 +900,14 @@ function showStudentEdit(student){
   const schs=s.schedules||[];
   let schsHtml='<div id="sch-list">';
   schs.forEach((sc,i)=>{
-    schsHtml+=`<div class="sch-chip" style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:4px">
+    schsHtml+=`<div class="sch-chip" style="margin-bottom:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center">
       周<select data-sch-wd="${i}">${['日','一','二','三','四','五','六'].map((d,j)=>`<option value="${j}" ${sc.weekday===j?'selected':''}>${d}</option>`).join('')}</select>
       <input data-sch-sh="${i}" type="number" value="${sc.startHour}" min="6" max="22" style="width:42px;padding:4px">:
       <input data-sch-sm="${i}" type="number" value="${sc.startMinute||0}" min="0" max="45" step="15" style="width:42px;padding:4px">-
       <input data-sch-eh="${i}" type="number" value="${sc.endHour}" min="6" max="22" style="width:42px;padding:4px">:
       <input data-sch-em="${i}" type="number" value="${sc.endMinute||0}" min="0" max="45" step="15" style="width:42px;padding:4px">
-       ¥<input data-sch-fee="${i}" type="number" value="${sc.fee||0}" placeholder="${s.defaultFee||80}" style="width:50px;padding:4px">
+      <input data-sch-loc="${i}" value="${sc.location||''}" placeholder="地点" style="width:70px;padding:4px;font-size:12px">
+      <span style="font-size:11px;color:var(--sec)">¥${s.defaultFee||Store.getCourseFee(s.courseType||'institution')||80}</span>
       <button data-del-sch="${i}" style="color:var(--red);font-size:18px">×</button>
     </div>`;
   });
@@ -955,9 +941,9 @@ function showStudentEdit(student){
       const sm=el.querySelector('[data-sch-sm]')?.value;
       const eh=el.querySelector('[data-sch-eh]')?.value;
       const em=el.querySelector('[data-sch-em]')?.value;
-      const fee=el.querySelector('[data-sch-fee]')?.value;
+      const loc=el.querySelector('[data-sch-loc]')?.value;
       if(wd!==undefined&&sh){
-        schedules.push({weekday:parseInt(wd),startHour:parseInt(sh),startMinute:parseInt(sm)||0,endHour:parseInt(eh),endMinute:parseInt(em)||0,fee:parseInt(fee)||0,location:overlay.querySelector('#ef-loc').value.trim(),campusId:overlay.querySelector('#ef-campus').value||null});
+        schedules.push({weekday:parseInt(wd),startHour:parseInt(sh),startMinute:parseInt(sm)||0,endHour:parseInt(eh),endMinute:parseInt(em)||0,fee:0,location:loc||overlay.querySelector('#ef-loc').value.trim(),campusId:overlay.querySelector('#ef-campus').value||null});
       }
     });
     const data={
@@ -996,8 +982,6 @@ function showStudentEdit(student){
       typeSel.onchange=()=>{
         const newFee=Store.getCourseFee(typeSel.value);
         feeInput.value=newFee;
-        // Also update all schedule fee inputs
-        $$('#sch-list [data-sch-fee]').forEach(el=>{el.value=newFee;});
       };
     }
     $('#btn-add-sch').onclick=()=>{
@@ -1005,13 +989,15 @@ function showStudentEdit(student){
       const i=list.children.length;
       const div=document.createElement('div');
       div.className='sch-chip';
-      div.style.cssText='margin-bottom:6px;display:flex;flex-wrap:wrap;gap:4px';
+      div.style.cssText='margin-bottom:6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center';
+      const defFee=parseInt($('#ef-fee')?.value)||80;
       div.innerHTML=`周<select data-sch-wd="${i}">${['日','一','二','三','四','五','六'].map((d,j)=>`<option value="${j}">${d}</option>`).join('')}</select>
         <input data-sch-sh="${i}" type="number" value="10" min="6" max="22" style="width:42px;padding:4px">:
         <input data-sch-sm="${i}" type="number" value="0" min="0" max="45" step="15" style="width:42px;padding:4px">-
         <input data-sch-eh="${i}" type="number" value="11" min="6" max="22" style="width:42px;padding:4px">:
         <input data-sch-em="${i}" type="number" value="0" min="0" max="45" step="15" style="width:42px;padding:4px">
-         ¥<input data-sch-fee="${i}" type="number" value="0" placeholder="默认" style="width:50px;padding:4px">
+        <input data-sch-loc="${i}" placeholder="地点" style="width:70px;padding:4px;font-size:12px">
+        <span style="font-size:11px;color:var(--sec)">¥${defFee}</span>
         <button data-del-sch="${i}" style="color:var(--red);font-size:18px">×</button>`;
       list.appendChild(div);
       div.querySelector('[data-del-sch]').onclick=()=>div.remove();
@@ -1041,7 +1027,20 @@ function showLessonEdit(lesson){
     if(overlay.querySelector('#ef-l-permanent').checked&&student){const d=new Date(lessons[idx].date);const wd=d.getDay();const hasSch=student.schedules?student.schedules.some(sc=>sc.weekday===wd):false;if(!hasSch&&!student.schedules)student.schedules=[];if(!hasSch)student.schedules.push({weekday:wd,startHour:lessons[idx].startHour,startMinute:lessons[idx].startMinute,endHour:lessons[idx].endHour,endMinute:lessons[idx].endMinute,location:lessons[idx].location,fee:lessons[idx].plannedFee,campusId:lessons[idx].campusId});student.defaultFee=lessons[idx].plannedFee;student.defaultLocation=lessons[idx].location;const students=Store.students();const si=students.findIndex(x=>x.id===student.id);if(si>=0)students[si]=student;Store.saveStudents(students);generateLessons();}
     Store.saveLessons(lessons);return true;
   });
-  setTimeout(()=>{const st=overlay.querySelector('#ef-l-status');if(st)st.onchange=()=>{overlay.querySelector('#ef-l-actual-group').style.display=st.value==='completed'?'block':'none';};},100);
+  setTimeout(()=>{
+    const sh=document.querySelector('#sheet-container .sheet-overlay:last-child');
+    if(!sh) return;
+    const st=sh.querySelector('#ef-l-status');
+    if(st) st.onchange=()=>{
+      const ag=sh.querySelector('#ef-l-actual-group');
+      if(ag) ag.style.display=st.value==='completed'?'block':'none';
+      // Auto-fill actual fee when switching to completed
+      if(st.value==='completed'){
+        const actual=sh.querySelector('#ef-l-actual');
+        if(actual&&!actual.value) actual.value=sh.querySelector('#ef-l-fee')?.value||l.plannedFee||0;
+      }
+    };
+  },100);
 }
 
 function showCampusEdit(campus){
@@ -1052,15 +1051,25 @@ function showCampusEdit(campus){
     <p class="form-hint">输入详细地址后，系统自动通过地图计算校区间的通勤时间，无需手动填写。</p>
     ${c.coords?`<div class="commute-auto">✅ 已定位 (${c.coords.lat?.toFixed(4)}, ${c.coords.lng?.toFixed(4)})</div>`:''}
   </div>`;
-  showSheet(c.id?'编辑校区':'添加校区',body,async overlay=>{
+  showSheet(c.id?'编辑校区':'添加校区',body,overlay=>{
     const name=overlay.querySelector('#ef-c-name').value.trim();if(!name){toast('请输入名称');return false;}
     const addr=overlay.querySelector('#ef-c-addr').value.trim();
-    let coords=null;
-    if(addr){try{coords=await geocodeAddr(addr);}catch(e){}}
-    const data={id:c.id||Store.uid(),name,address:addr,coords};
+    const data={id:c.id||Store.uid(),name,address:addr,coords:c.coords||null};
     const campuses=Store.campuses();const idx=campuses.findIndex(x=>x.id===data.id);
     if(idx>=0)campuses[idx]=data;else campuses.push(data);
-    Store.saveCampuses(campuses);return true;
+    Store.saveCampuses(campuses);
+    if(addr){
+      toast('📍 正在定位地址...');
+      geocodeAddr(addr).then(coords=>{
+        if(coords){
+          data.coords=coords;
+          const cs=Store.campuses();const i=cs.findIndex(x=>x.id===data.id);
+          if(i>=0){cs[i]=data;Store.saveCampuses(cs);}
+          toast(`✅ 已定位 (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`);
+        }else{toast('⚠️ 地址定位失败，已保存');}
+      }).catch(()=>{toast('⚠️ 地址定位失败，已保存');});
+    }
+    return true;
   });
 }
 
@@ -1085,6 +1094,11 @@ function bindEvents(){
   $$('.nav-loc').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();openGaodeNav(el.dataset.loc,el.dataset.campus);};});
   // Long press -> mark completed
   $$('.lesson-card').forEach(el=>{let t;el.addEventListener('touchstart',()=>{t=setTimeout(()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l&&l.status==='scheduled'){l.status='completed';l.actualFee=l.plannedFee;Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));toast('✓ 已标记完成');render();}},600);});el.addEventListener('touchend',()=>clearTimeout(t));el.addEventListener('touchmove',()=>clearTimeout(t));});
+  // Quick-complete button
+  $$('[data-quick-done]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const l=Store.lessons().find(x=>x.id===el.dataset.quickDone);if(l&&l.status==='scheduled'){l.status='completed';l.actualFee=l.plannedFee;Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));toast('✓ 已完成');render();}};});
+  // Week nav
+  const pw=$('#btn-prev-week');if(pw)pw.onclick=()=>{selectedDate=C.addDays(selectedDate,-7);render();};
+  const nw=$('#btn-next-week');if(nw)nw.onclick=()=>{selectedDate=C.addDays(selectedDate,7);render();};
   const pm=$('#btn-pm');if(pm)pm.onclick=()=>{financeMonth.setMonth(financeMonth.getMonth()-1);render();};
   const nm=$('#btn-nm');if(nm)nm.onclick=()=>{financeMonth.setMonth(financeMonth.getMonth()+1);render();};
   const ac=$('#btn-add-campus');if(ac)ac.onclick=()=>showCampusEdit();
