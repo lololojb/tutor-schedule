@@ -34,7 +34,7 @@ label{font-size:13px;color:var(--sec);display:block;margin-bottom:4px}
 .date-chip .dow{font-size:11px}
 .date-chip .day{font-size:17px;font-weight:500;margin-top:2px}
 .lesson-card{background:var(--card);border-radius:var(--radius);margin:8px 16px;overflow:hidden}
-.lesson-card .inner{padding:14px 16px;display:flex;gap:12px;transition:transform .25s}
+.lesson-card .inner{padding:14px 16px;display:flex;gap:12px}
 .lesson-card .time-col{width:52px;text-align:center;flex-shrink:0}
 .lesson-card .time-col .t1{font-weight:600;font-size:15px}
 .lesson-card .time-col .t2{font-size:11px;color:var(--sec)}
@@ -249,7 +249,7 @@ async function calcAllCommutes(lessons){
 // ==================== LESSON GENERATION ====================
 function generateLessons(){
   const today=C.today();
-  const end=C.addDays(today,Store.get('weeks')||4*7);
+  const end=C.addDays(today,(Store.get('weeks')||4)*7);
   const students=Store.students().filter(s=>s.isActive!==false);
   const existing=Store.lessons();
 
@@ -388,7 +388,7 @@ function renderToday(){
             <div class="time-col"><div class="t1">${fmt.time(l.startHour,l.startMinute)}</div><div class="t2">${fmt.time(l.endHour,l.endMinute)}</div></div>
             <div class="info-col">
               <div class="nm">${student?.name||'未知'}${l.isAdjusted?' <span class="badge adjusted">已调整</span>':''}</div>
-              ${l.location||campus?`<div class="loc nav-loc" data-loc="${l.location||''}" data-campus="${l.campusId||''}" style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--blue);text-underline-offset:2px">🧭 ${l.location||campus?.name||''} → 导航</div>`:''}
+              ${(l.location||campus)?`<div class="loc nav-loc" data-loc="${l.location||''}" data-campus="${l.campusId||''}" style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--blue);text-underline-offset:2px">🧭 ${l.location||campus?.name||''} → 导航</div>`:''}
               <span class="badge ${bc}" style="margin-top:4px">${bt}</span>
             </div>
             <div class="fee-col">
@@ -490,11 +490,11 @@ async function calcAndShowCommute(){
     }else if(metroNeed>gap){
       el.className='commute-bar error';
       el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min ≥ ${gap}min，来不及！`;
-    }else if(metroNeed>gap){
+    }else if(gap-metroNeed<=10){
       el.className='commute-bar info';
       let sugH=b.startHour,sugM=b.startMinute-metroNeed;
       if(sugM<0){sugM+=60;sugH-=1;}
-      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min，仅${gap}min · 建议${fmt.time(sugH,sugM)}出发`;
+      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min，仅剩${gap-metroNeed}min · 建议${fmt.time(sugH,sugM)}出发`;
     }else{
       el.className='commute-bar ok';
       el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
