@@ -169,11 +169,25 @@ function openGaodeNav(loc,campusId){
   }
 }
 
+const AMAP_KEY='0171acb32790d271c1b41464da33b47a';
+
 async function geocodeAddr(addr){
   if(!addr) return null;
   const fullAddr=addr.includes('深圳')?addr:'深圳'+addr;
   let cached=Store.geocode(fullAddr);
   if(cached) return cached;
+  // 高德地理编码
+  try{
+    const resp=await fetch(`https://restapi.amap.com/v3/geocode/geo?address=${encodeURIComponent(fullAddr)}&city=深圳&key=${AMAP_KEY}`);
+    const data=await resp.json();
+    if(data.status==='1'&&data.geocodes?.length){
+      const [lng,lat]=data.geocodes[0].location.split(',').map(Number);
+      const r={lat,lng};
+      Store.setGeocode(fullAddr,r);
+      return r;
+    }
+  }catch(e){}
+  // 降级：OSM Nominatim
   try{
     const resp=await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fullAddr)}&limit=1`);
     const data=await resp.json();
@@ -186,20 +200,31 @@ async function geocodeAddr(addr){
   return null;
 }
 
-// Calculate route between two addresses
+// 公交路线规划（高德公交API + OSRM降级）
 async function calcRoute(from,toAddr){
   if(!from||!toAddr||from===toAddr) return 0;
   const [f,t]=await Promise.all([geocodeAddr(from),geocodeAddr(toAddr)]);
   if(!f||!t) return 0;
-  const key=`${from}|${toAddr}`;
-  const cached=Store.route(key);
+  const cacheKey=`${from}|${toAddr}`;
+  const cached=Store.route(cacheKey);
   if(cached!==null) return cached;
+  // 高德公交路线规划
+  try{
+    const resp=await fetch(`https://restapi.amap.com/v3/direction/transit/integrated?origin=${f.lng},${f.lat}&destination=${t.lng},${t.lat}&city=深圳&key=${AMAP_KEY}`);
+    const data=await resp.json();
+    if(data.status==='1'&&data.route?.transits?.length){
+      const mins=Math.round(data.route.transits[0].duration/60);
+      Store.setRoute(cacheKey,mins);
+      return mins;
+    }
+  }catch(e){}
+  // 降级：OSRM driving × 1.1 估算
   try{
     const resp=await fetch(`https://router.project-osrm.org/route/v1/driving/${f.lng},${f.lat};${t.lng},${t.lat}?overview=false`);
     const data=await resp.json();
     if(data.routes?.length){
-      const mins=Math.round(data.routes[0].duration/60);
-      Store.setRoute(key,mins);
+      const mins=Math.round(data.routes[0].duration/60*1.1);
+      Store.setRoute(cacheKey,mins);
       return mins;
     }
   }catch(e){}
@@ -343,8 +368,8 @@ function renderToday(){
       html+=`<div class="commute-bar ok" style="margin:0 16px 8px;padding:10px 14px;font-size:14px">✅ 今日课程全部完成</div>`;
     }
   }
-  // GPS/commute placeholder
-  html+=`<div id="gps-commute-bar" style="display:none;margin:0 16px 8px"></div>`;
+  // Home commute placeholder
+  html+=`<div id="home-commute-bar" style="display:none;margin:0 16px 8px"></div>`;
 
   if(dayWeekMode==='week'){
     html+=renderWeekView();
@@ -423,31 +448,29 @@ async function calcAndShowCommute(){
   if(lessons.length===0) return;
 
   // Home → first lesson
-  const homeBar=$('#gps-commute-bar');
+  const homeBar=$('#home-commute-bar');
   if(homeBar&&lessons.length>0){
-    const homeAddr=Store.get('homeAddr')||'光明区凤凰城地铁站';
+    const homeAddr=Store.get('homeAddr')||'深圳市光明区光明街道牛山路13号怡景一期';
     const toAddr=addrFor(lessons[0]);
     if(toAddr){
-      const routeTime=await calcRoute(homeAddr,toAddr);
-      const metroTime=Math.round(routeTime*1.1);
-      const totalTime=20+metroTime; // 20min步行到地铁站 + 地铁时间
+      const metroTime=await calcRoute(homeAddr,toAddr);
       const nowMin=new Date().getHours()*60+new Date().getMinutes();
       const startMin=lessons[0].startHour*60+lessons[0].startMinute;
       const available=startMin-nowMin;
-      const urgent=totalTime>available;
+      const urgent=metroTime>available;
       // Suggested departure time
-      let depH=lessons[0].startHour,depM=lessons[0].startMinute-totalTime;
+      let depH=lessons[0].startHour,depM=lessons[0].startMinute-metroTime;
       while(depM<0){depM+=60;depH-=1;}
       homeBar.style.display='flex';
-      if(routeTime>0){
+      if(metroTime>0){
         homeBar.className='commute-bar '+(urgent?'error':'ok');
-        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min (+20min步行) · 建议${fmt.time(depH,depM)}出发 · ${urgent?'⚠️ 来不及！':'来得及'} <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="gps-nav-btn">🧭 导航</button>`;
+        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min · 建议${fmt.time(depH,depM)}出发 · 现在${fmt.time(new Date().getHours(),new Date().getMinutes())} · ${urgent?'⚠️ 来不及！':'来得及'} <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="home-nav-btn">🧭 导航</button>`;
       }else{
         homeBar.className='commute-bar info';
-        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} · 通勤未知 · 建议${fmt.time(depH,depM)}出发 (20min步行) <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="gps-nav-btn">🧭 导航</button>`;
+        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} · 未能计算地铁时间 · <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="home-nav-btn">🧭 导航</button>`;
       }
-      const gpsNav=$('#gps-nav-btn');
-      if(gpsNav) gpsNav.onclick=(e)=>{e.stopPropagation();openGaodeNav(lessons[0].location,lessons[0].campusId);};
+      const homeNav=$('#home-nav-btn');
+      if(homeNav) homeNav.onclick=(e)=>{e.stopPropagation();openGaodeNav(lessons[0].location,lessons[0].campusId);};
     }
   }
 
@@ -458,14 +481,13 @@ async function calcAndShowCommute(){
     const i=parseInt(el.dataset.commute);
     const a=lessons[i],b=lessons[i+1];
     const gap=(b.startHour*60+b.startMinute)-(a.endHour*60+a.endMinute);
-    const commuteNeed=commutes[i]||0;
-    const metroNeed=Math.round(commuteNeed*1.1);
+    const metroNeed=commutes[i]||0;
     const locA=a.location||'A',locB=b.location||'B';
     el.style.display='flex';
-    if(!commuteNeed){
+    if(!metroNeed){
       el.className='commute-bar ok';
       el.textContent=`📍 ${locA}→${locB} · 间隔${gap}min`;
-    }else if(commuteNeed>gap){
+    }else if(metroNeed>gap){
       el.className='commute-bar error';
       el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min ≥ ${gap}min，来不及！`;
     }else if(metroNeed>gap){
@@ -648,8 +670,8 @@ function renderSettings(){
     <p class="form-hint">根据学生每周排课自动生成对应周数的课程</p>
   </div>
   <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">🏠 我的位置</h3>
-    <input id="set-home-addr" value="${Store.get('homeAddr')||'光明区凤凰城地铁站'}" placeholder="输入家附近的地铁站">
-    <p class="form-hint">通勤从家出发计算：家→地铁站步行固定20分钟 + 地铁时间到第一节课</p>
+    <input id="set-home-addr" value="${Store.get('homeAddr')||'深圳市光明区光明街道牛山路13号怡景一期'}" placeholder="输入家庭地址">
+    <p class="form-hint">通勤从家出发计算，使用高德地图实时地铁用时</p>
     <button class="btn btn-ghost btn-sm" id="btn-save-home" style="margin-top:8px">保存位置</button>
   </div>
   <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">校区管理</h3>`;
@@ -1114,7 +1136,7 @@ function bindEvents(){
   const ac=$('#btn-add-campus');if(ac)ac.onclick=()=>showCampusEdit();
   const st=$('#btn-save-types');if(st)st.onclick=()=>{Store.saveCourseTypes({private:parseInt($('#set-fee-private').value)||100,institution:parseInt($('#set-fee-institution').value)||80,practice:parseInt($('#set-fee-practice').value)||75});toast('默认价格已保存 ✓');};
   const sw=$('#set-weeks');if(sw)sw.onchange=()=>{Store.set('weeks',parseInt(sw.value));generateLessons();toast(`排课周数已更新：${sw.value}周`);};
-  const shome=$('#btn-save-home');if(shome)shome.onclick=()=>{const v=$('#set-home-addr').value.trim();Store.set('homeAddr',v||'光明区凤凰城地铁站');geocodeAddr(v);toast('✅ 家位置已保存');};
+  const shome=$('#btn-save-home');if(shome)shome.onclick=()=>{const v=$('#set-home-addr').value.trim();Store.set('homeAddr',v||'深圳市光明区光明街道牛山路13号怡景一期');geocodeAddr(v);toast('✅ 家位置已保存');};
   const cb=$('#btn-clear');if(cb)cb.onclick=()=>{if(confirm('⚠️ 清除全部数据？')){if(confirm('所有学生、排课、财务记录将永久删除，无法恢复。确认？')){localStorage.clear();render();toast('已清除全部数据');}}};
   $$('[data-edit-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const c=Store.campuses().find(x=>x.id===el.dataset.editCampus);if(c)showCampusEdit(c);};});
   $$('[data-del-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();if(confirm('删除该校区？')){Store.saveCampuses(Store.campuses().filter(x=>x.id!==el.dataset.delCampus));render();}};});
