@@ -284,7 +284,7 @@ function generateLessons(){
   // Remove lessons for deleted schedules that no longer match
   const cleaned=existing.filter(l=>{
     const stu=students.find(s=>s.id===l.studentId);
-    if(!stu||!stu.schedules||!stu.schedules.length) return l.status!=='scheduled';
+    if(!stu||!stu.schedules||!stu.schedules.length) return l.status!=='scheduled'||l.isAdjusted;
     const d=new Date(l.date);
     const wd=d.getDay();
     return stu.schedules.some(sch=>sch.weekday===wd&&sch.startHour===l.startHour&&sch.startMinute===(l.startMinute||0))||l.status!=='scheduled'||l.isAdjusted;
@@ -301,10 +301,11 @@ function syncStudentToLessons(stu){
     if(l.studentId!==stu.id||l.status!=='scheduled'||l.date<todayStr) return;
     const newFee=stu.defaultFee||Store.getCourseFee(stu.courseType||'institution');
     if(l.plannedFee!==newFee){l.plannedFee=newFee;updated++;}
-    // Match schedule by weekday + same original time
+    // Match schedule: exact time first, fallback weekday-only (schedule time changed)
     const d=new Date(l.date);
-    const sch=stu.schedules?.find(s=>s.weekday===d.getDay()
+    let sch=stu.schedules?.find(s=>s.weekday===d.getDay()
       &&s.startHour===l.startHour&&(s.startMinute||0)===(l.startMinute||0));
+    if(!sch) sch=stu.schedules?.find(s=>s.weekday===d.getDay());
     if(sch){
       const newLoc=sch.location||stu.defaultLocation||'';
       if(l.location!==newLoc){l.location=newLoc;updated++;}
@@ -434,7 +435,7 @@ function renderToday(){
             </div>
           </div>`;
         // Commute placeholder - filled async
-        if(i<lessons.length-1&&!isPast){
+        if(i<activeLessons.length-1&&!isPast){
           html+=`<div class="commute-bar info" data-commute="${i}" style="display:none">🔄 计算通勤中...</div>`;
         }
         html+='</div>';
