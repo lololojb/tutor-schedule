@@ -105,6 +105,7 @@ label{font-size:13px;color:var(--sec);display:block;margin-bottom:4px}
 .sch-chip .del{font-size:14px;cursor:pointer;opacity:.6}
 .sch-chip .del:hover{opacity:1}
 .commute-auto{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--green);margin-top:4px}
+.form-hint{font-size:12px;color:var(--sec);margin-top:4px;line-height:1.5}
 .filter-pill{padding:5px 12px;border-radius:14px;font-size:13px;background:var(--card);color:var(--sec);border:1px solid transparent;white-space:nowrap;cursor:pointer}
 .filter-pill.active{background:#007AFF12;color:var(--blue);border-color:var(--blue)}
 .filter-row{display:flex;overflow-x:auto;padding:4px 16px 8px;gap:6px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
@@ -149,14 +150,11 @@ const fmt={
   weekday(d){return['日','一','二','三','四','五','六'][new Date(d).getDay()]},
   dateFull(d){return this.date(d)+' 周'+this.weekday(d)},
   month(d){const dd=new Date(d);return`${dd.getFullYear()}年${dd.getMonth()+1}月`},
-  now(){const d=new Date();return`${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`},
 };
 const C={
   today(){const d=new Date();d.setHours(0,0,0,0);return d},
-  dayStart(d){const r=new Date(d);r.setHours(0,0,0,0);return r},
   addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r},
   sameDay(a,b){return new Date(a).toDateString()===new Date(b).toDateString()},
-  weekStart(d){const r=new Date(d);r.setDate(r.getDate()-(r.getDay()+6)%7);r.setHours(0,0,0,0);return r},
   monday(d){const day=d.getDay();const diff=day===0?-6:1-day;const r=new Date(d);r.setDate(r.getDate()+diff);r.setHours(0,0,0,0);return r},
 };
 
@@ -337,8 +335,9 @@ function renderToday(){
   }
   html+='</div>';
 
+  const isNotToday=!C.sameDay(selectedDate,C.today());
   html+=`<div style="display:flex;align-items:center;padding:8px 16px">
-    <span style="font-weight:700;font-size:20px">${dateTitle(selectedDate)}</span><span style="flex:1"></span>
+    <span style="font-weight:700;font-size:20px">${dateTitle(selectedDate)}</span>${isNotToday?`<button class="btn btn-sm btn-ghost" id="btn-back-today" style="margin-left:8px;font-size:12px">回今天</button>`:''}<span style="flex:1"></span>
     <button class="btn btn-sm btn-primary" id="btn-add-lesson">+ 试课/加课</button>
     <div class="segmented" style="margin-left:6px"><button class="${dayWeekMode==='day'?'active':''}" data-mode="day">日</button><button class="${dayWeekMode==='week'?'active':''}" data-mode="week">周</button></div>
   </div>`;
@@ -362,6 +361,15 @@ function renderToday(){
     </div>`;
   }
 
+  // Today unconfirmed reminder
+  if(lessons.length>0){
+    const unconfirmed=lessons.filter(l=>l.status==='scheduled').length;
+    if(unconfirmed>0){
+      html+=`<div style="margin:0 16px 8px;padding:10px 14px;background:#FFF3E0;border-radius:10px;display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;color:#E65100">📌 今天还有 <span style="font-size:20px;margin:0 2px">${unconfirmed}</span> 节课待确认</div>`;
+    }else{
+      html+=`<div class="commute-bar ok" style="margin:0 16px 8px;padding:10px 14px;font-size:14px">✅ 今日课程全部完成</div>`;
+    }
+  }
   // GPS/commute placeholder
   html+=`<div id="gps-commute-bar" style="display:none;margin:0 16px 8px"></div>`;
 
@@ -457,7 +465,9 @@ async function calcAndShowCommute(){
           const urgent=metroTime>available;
           gpsBar.className='commute-bar '+(urgent?'error':'ok');
           gpsBar.style.display='flex';
-          gpsBar.innerHTML=`📍 <b>从我出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min · 现在${fmt.time(new Date().getHours(),new Date().getMinutes())} · ${urgent?'⚠️ 出发可能来不及！':'来得及'}`;
+          gpsBar.innerHTML=`📍 <b>从我出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min · 现在${fmt.time(new Date().getHours(),new Date().getMinutes())} · ${urgent?'⚠️ 出发可能来不及！':'来得及'} <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="gps-nav-btn">🧭 导航</button>`;
+          const gpsNav=$('#gps-nav-btn');
+          if(gpsNav) gpsNav.onclick=(e)=>{e.stopPropagation();openGaodeNav(lessons[0].location,lessons[0].campusId);};
         }
       }
     }
@@ -482,7 +492,9 @@ async function calcAndShowCommute(){
       el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min ≥ ${gap}min，来不及！`;
     }else if(metroNeed>gap){
       el.className='commute-bar info';
-      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min，仅${gap}min · 建议${fmt.time(b.startHour,b.startMinute-metroNeed)}出发`;
+      let sugH=b.startHour,sugM=b.startMinute-metroNeed;
+      if(sugM<0){sugM+=60;sugH-=1;}
+      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min，仅${gap}min · 建议${fmt.time(sugH,sugM)}出发`;
     }else{
       el.className='commute-bar ok';
       el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
@@ -509,7 +521,7 @@ function renderStudents(){
   });
 
   let html=`<div style="padding:12px 16px;display:flex;gap:8px">
-    <input type="search" placeholder="搜索姓名或电话..." id="search-students" value="${studentFilter}" style="flex:1">
+    <input type="search" placeholder="搜索姓名..." id="search-students" value="${studentFilter}" style="flex:1">
     <button class="btn btn-primary" id="btn-add-student">+</button>
   </div>`;
 
@@ -529,7 +541,7 @@ function renderStudents(){
   let filtered=students;
   if(studentFilter){
     const q=studentFilter.toLowerCase();
-    filtered=filtered.filter(s=>s.name.toLowerCase().includes(q)||(s.parentContact||'').toLowerCase().includes(q));
+    filtered=filtered.filter(s=>s.name.toLowerCase().includes(q));
   }
   if(studentCampusFilter) filtered=filtered.filter(s=>(s.defaultCampusId||'')===studentCampusFilter);
 
@@ -562,7 +574,8 @@ function renderStudentDetail(sid){
   const campus=Store.campuses().find(c=>c.id===s.defaultCampusId);
   const lessons=Store.lessons().filter(l=>l.studentId===sid).sort((a,b)=>b.date.localeCompare(a.date));
   const now=new Date();const ms=new Date(now.getFullYear(),now.getMonth(),1).toDateStr();
-  const ml=lessons.filter(l=>l.date>=ms&&l.status==='completed');
+  const me=new Date(now.getFullYear(),now.getMonth()+1,1).toDateStr();
+  const ml=lessons.filter(l=>l.date>=ms&&l.date<me&&l.status==='completed');
   const mi=ml.reduce((sum,l)=>sum+(l.actualFee||l.plannedFee||0),0);
   const allComp=lessons.filter(l=>l.status==='completed');
   const totalIncome=allComp.reduce((sum,l)=>sum+(l.actualFee||l.plannedFee||0),0);
@@ -570,7 +583,6 @@ function renderStudentDetail(sid){
   let html=`<div style="padding:16px">
     <button class="btn btn-ghost" id="btn-back-students">‹ 返回</button>
     <div style="margin-top:16px"><h2 style="font-size:28px;font-weight:700">${s.name}</h2>
-      ${s.parentContact?`<p style="color:var(--sec);margin-top:4px">📱 ${s.parentContact}</p>`:''}
       ${s.defaultLocation?`<p style="color:var(--sec)">📍 ${s.defaultLocation}</p>`:''}
       ${campus?`<p style="color:var(--sec)">🏫 ${campus.name}</p>`:''}
       <p style="color:var(--sec)">📋 ${courseTypeName(s.courseType||'institution')} · 💰 ¥${s.defaultFee||0}/节</p>
@@ -645,7 +657,7 @@ function renderFinance(){
 // ==================== SETTINGS ====================
 function renderSettings(){
   const campuses=Store.campuses();
-  const students=Store.students();
+  const weeks=Store.get('weeks')||4;
   const ct=Store.courseTypes();
   let html=`<div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">课程类型默认价格</h3>
     <div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid var(--sep)"><span style="flex:1">🏫 机构课 (默认)</span>¥<input id="set-fee-institution" type="number" value="${ct.institution||80}" style="width:70px;padding:6px;text-align:center">/节</div>
@@ -653,16 +665,23 @@ function renderSettings(){
     <div style="display:flex;align-items:center;padding:8px 0"><span style="flex:1">🎹 陪练课</span>¥<input id="set-fee-practice" type="number" value="${ct.practice||75}" style="width:70px;padding:6px;text-align:center">/节</div>
     <button class="btn btn-ghost btn-sm" id="btn-save-types" style="margin-top:8px">保存默认价格</button>
   </div>
+  <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">排课设置</h3>
+    <div style="display:flex;align-items:center"><span style="flex:1">自动生成未来</span><select id="set-weeks" style="width:80px;text-align:center">${[2,4,6,8].map(w=>`<option value="${w}" ${weeks===w?'selected':''}>${w}周</option>`).join('')}</select></div>
+    <p class="form-hint">根据学生每周排课自动生成对应周数的课程</p>
+  </div>
   <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">校区管理</h3>`;
   campuses.forEach(c=>{html+=`<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--sep)"><div style="flex:1"><div style="font-weight:500">🏫 ${c.name}</div><div style="font-size:13px;color:var(--sec)">${c.address||''}</div></div><button class="btn btn-ghost btn-sm" data-edit-campus="${c.id}">编辑</button><button class="btn btn-ghost btn-sm" data-del-campus="${c.id}" style="color:var(--red)">删</button></div>`;});
   html+=`<button class="btn btn-ghost btn-block" id="btn-add-campus" style="margin-top:8px">+ 添加校区</button></div>`;
 
-  html+=`<div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">数据操作</h3>
+  html+=`<div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">导入课表</h3>
+    <p class="form-hint" style="margin-bottom:8px">从备忘录粘贴课表文本，自动解析学生、时间和地点</p>
     <button class="btn btn-primary btn-block" id="btn-import">📥 从备忘录导入课表</button>
-    <button class="btn btn-ghost btn-block" id="btn-sample" style="margin-top:8px">📋 加载示例数据</button>
-    <button class="btn btn-danger btn-block" id="btn-clear" style="margin-top:8px">🗑 清除全部数据</button>
   </div>`;
-  html+=`<div class="card"><p style="font-size:12px;color:var(--sec);text-align:center">家教排课 PWA v2<br>通勤时间通过地图自动计算</p></div>`;
+  // 清除数据 — 藏底部小字
+  html+=`<div style="text-align:center;padding:24px 16px">
+    <button id="btn-clear" style="font-size:12px;color:var(--sec)">🗑 清除全部数据</button>
+  </div>`;
+  html+=`<div style="text-align:center;padding-bottom:24px"><p style="font-size:12px;color:var(--sec)">家教排课 PWA · 通勤时间通过地图自动计算</p></div>`;
   return html;
 }
 
@@ -708,7 +727,6 @@ function showImport(){
         if(newStu.notes&&exist.notes!==newStu.notes&&/请假|停课|未定|两周一节/.test(newStu.notes)){
           exist.notes=(exist.notes?exist.notes+'；':'')+newStu.notes;
         }
-        if(newStu.parentContact&&!exist.parentContact) exist.parentContact=newStu.parentContact;
         if(newStu.defaultLocation&&!exist.defaultLocation) exist.defaultLocation=newStu.defaultLocation;
         // NEVER overwrite: courseType, defaultFee, defaultCampusId, isActive
       }else{
@@ -755,12 +773,6 @@ function parseSchedule(text){
     // Match weekday header: 📅 周一, 周一, 📅 Monday etc
     const wdMatch=line.match(/周\s*([一二三四五六日天])/);
     if(wdMatch){currentWeekday=wdMap[wdMatch[1]];return;}
-    const engMatch=line.match(/monday|tuesday|wednesday|thursday|friday|saturday|sunday/i);
-    if(engMatch){
-      const map={sunday:0,monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6};
-      currentWeekday=map[engMatch[0].toLowerCase()];
-      return;
-    }
     if(currentWeekday<0) return;
 
     // Skip non-lesson lines
@@ -812,7 +824,7 @@ function parseSchedule(text){
       if(isSuspended) existingStu.isActive=false;
       // Add schedule for non-suspended lessons
       if(!isSuspended){
-        const dup=existingStu.schedules.find(sc=>sc.weekday===currentWeekday&&sc.startHour===sh&&sc.startMinute===sm);
+        const dup=existingStu.schedules.find(sc=>sc.weekday===currentWeekday&&sc.startHour===sh&&sc.startMinute===sm&&sc.endHour===eh&&sc.endMinute===em);
         if(!dup){
           existingStu.schedules.push({weekday:currentWeekday,startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,fee:80,campusId:null});
         }
@@ -916,7 +928,6 @@ function showStudentEdit(student){
   const ct=s.courseType||'institution';
   const body=`<div class="form-sect"><h3>基本信息</h3>
     <label>姓名</label><input id="ef-name" value="${s.name||''}" placeholder="学生姓名">
-    <label style="margin-top:8px">家长联系方式</label><input id="ef-contact" value="${s.parentContact||''}" placeholder="手机号（选填）">
     <label style="margin-top:8px">课程类型</label><select id="ef-type">
       <option value="institution" ${ct==='institution'?'selected':''}>机构课 (¥${Store.getCourseFee('institution')}/节)</option>
       <option value="private" ${ct==='private'?'selected':''}>家教课 (¥${Store.getCourseFee('private')}/节)</option>
@@ -948,7 +959,7 @@ function showStudentEdit(student){
     });
     const data={
       id:s.id||Store.uid(),name,
-      parentContact:overlay.querySelector('#ef-contact').value.trim(),
+      parentContact:'',
       courseType:overlay.querySelector('#ef-type').value||'private',
       defaultLocation:overlay.querySelector('#ef-loc').value.trim(),
       defaultFee:parseInt(overlay.querySelector('#ef-fee').value)||0,
@@ -971,6 +982,21 @@ function showStudentEdit(student){
       }
     });
     if(updated>0){Store.saveLessons(lessons);toast(`已同步 ${updated} 节课 → ¥${data.defaultFee}/节`);}
+    // Conflict detection
+    const others=students.filter(x=>x.id!==data.id&&x.isActive!==false&&x.schedules?.length);
+    const conflicts=[];
+    data.schedules.forEach(ns=>{
+      others.forEach(o=>{
+        o.schedules.forEach(os=>{
+          if(os.weekday===ns.weekday){
+            const nsS=ns.startHour*60+(ns.startMinute||0),nsE=ns.endHour*60+(ns.endMinute||0);
+            const osS=os.startHour*60+(os.startMinute||0),osE=os.endHour*60+(os.endMinute||0);
+            if(nsS<osE&&osS<nsE) conflicts.push(`${o.name} ${['日','一','二','三','四','五','六'][ns.weekday]} ${fmt.time(os.startHour,os.startMinute||0)}-${fmt.time(os.endHour,os.endMinute||0)}`);
+          }
+        });
+      });
+    });
+    if(conflicts.length) toast(`⚠️ 时间冲突：${conflicts.join('、')}`);
     generateLessons();return true;
   });
 
@@ -1080,6 +1106,7 @@ function bindEvents(){
   $$('.segmented button').forEach(el=>{el.onclick=()=>{dayWeekMode=el.dataset.mode;render();};});
   const eb=$('#btn-export');if(eb)eb.onclick=exportWeekImage;
   const al=$('#btn-add-lesson');if(al)al.onclick=showAdHocLesson;
+  const bt=$('#btn-back-today');if(bt)bt.onclick=()=>{selectedDate=C.today();render();};
   const schEl=$('#search-students');if(schEl){
     const doFilter=()=>{studentFilter=schEl.value;filterStudentDOM();};
     schEl.addEventListener('input',doFilter);
@@ -1093,7 +1120,7 @@ function bindEvents(){
   // Location click -> 高德导航
   $$('.nav-loc').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();openGaodeNav(el.dataset.loc,el.dataset.campus);};});
   // Long press -> mark completed
-  $$('.lesson-card').forEach(el=>{let t;el.addEventListener('touchstart',()=>{t=setTimeout(()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l&&l.status==='scheduled'){l.status='completed';l.actualFee=l.plannedFee;Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));toast('✓ 已标记完成');render();}},600);});el.addEventListener('touchend',()=>clearTimeout(t));el.addEventListener('touchmove',()=>clearTimeout(t));});
+  $$('.lesson-card').forEach(el=>{let t;el.addEventListener('touchstart',()=>{t=setTimeout(()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l&&l.status==='scheduled'){l.status='completed';l.actualFee=l.plannedFee;Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));navigator.vibrate&&navigator.vibrate(15);toast('✓ 已标记完成');render();}},600);});el.addEventListener('touchend',()=>clearTimeout(t));el.addEventListener('touchmove',()=>clearTimeout(t));});
   // Quick-complete button
   $$('[data-quick-done]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const l=Store.lessons().find(x=>x.id===el.dataset.quickDone);if(l&&l.status==='scheduled'){l.status='completed';l.actualFee=l.plannedFee;Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));toast('✓ 已完成');render();}};});
   // Week nav
@@ -1103,11 +1130,11 @@ function bindEvents(){
   const nm=$('#btn-nm');if(nm)nm.onclick=()=>{financeMonth.setMonth(financeMonth.getMonth()+1);render();};
   const ac=$('#btn-add-campus');if(ac)ac.onclick=()=>showCampusEdit();
   const st=$('#btn-save-types');if(st)st.onclick=()=>{Store.saveCourseTypes({private:parseInt($('#set-fee-private').value)||100,institution:parseInt($('#set-fee-institution').value)||80,practice:parseInt($('#set-fee-practice').value)||75});toast('默认价格已保存 ✓');};
+  const sw=$('#set-weeks');if(sw)sw.onchange=()=>{Store.set('weeks',parseInt(sw.value));generateLessons();toast(`排课周数已更新：${sw.value}周`);};
+  const cb=$('#btn-clear');if(cb)cb.onclick=()=>{if(confirm('⚠️ 清除全部数据？')){if(confirm('所有学生、排课、财务记录将永久删除，无法恢复。确认？')){localStorage.clear();render();toast('已清除全部数据');}}};
   $$('[data-edit-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const c=Store.campuses().find(x=>x.id===el.dataset.editCampus);if(c)showCampusEdit(c);};});
   $$('[data-del-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();if(confirm('删除该校区？')){Store.saveCampuses(Store.campuses().filter(x=>x.id!==el.dataset.delCampus));render();}};});
   const ib=$('#btn-import');if(ib)ib.onclick=showImport;
-  const sb=$('#btn-sample');if(sb)sb.onclick=loadDemoData;
-  const cb=$('#btn-clear');if(cb)cb.onclick=()=>{if(confirm('⚠️ 清除全部数据？')){if(confirm('所有学生、排课、财务记录将永久删除，无法恢复。确认？')){localStorage.clear();render();toast('已清除全部数据');}}};
 }
 
 function bindStudentDetailEvents(sid){
@@ -1131,18 +1158,6 @@ function getDayLessons(date){const ds=date.toDateStr();return Store.lessons().fi
 function dateTitle(d){const today=C.today();if(C.sameDay(d,today))return'今天';if(C.sameDay(d,C.addDays(today,-1)))return'昨天';if(C.sameDay(d,C.addDays(today,1)))return'明天';return`${d.getMonth()+1}月${d.getDate()}日 周${fmt.weekday(d)}`;}
 function toast(msg){const el=document.createElement('div');el.className='toast';el.textContent=msg;$('#toast-container').appendChild(el);setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),300);},2000);}
 async function exportWeekImage(){const grid=$('#week-grid');if(!grid)return toast('请先切换到周视图');try{const canvas=await html2canvas(grid,{backgroundColor:'#ffffff',scale:2});const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));if(navigator.share){const file=new File([blob],`课表_${fmt.date(C.monday(selectedDate))}.png`,{type:'image/png'});await navigator.share({files:[file],title:'周课表'});}else{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`课表_${fmt.date(C.monday(selectedDate))}.png`;a.click();}toast('导出成功 ✓');}catch(e){toast('导出失败');}}
-
-// ==================== DEMO DATA ====================
-function loadDemoData(){
-  if(Store.students().length>0){if(!confirm('已有数据，是否覆盖？'))return;}
-  const c1=Store.uid();
-  Store.saveCampuses([{id:c1,name:'总店',address:'',coords:null}]);
-  const stu=Store.uid();
-  Store.saveStudents([{id:stu,name:'示例学生',parentContact:'',courseType:'institution',defaultLocation:'',defaultFee:80,defaultCampusId:c1,schedules:[{weekday:1,startHour:10,startMinute:0,endHour:11,endMinute:0,location:'',fee:80,campusId:c1}],isActive:true,notes:''}]);
-  generateLessons();
-  toast('已加载示例数据，请用导入功能加载真实课表');
-  render();
-}
 
 // ==================== INIT ====================
 // 数据迁移：检测旧版格式并清除
