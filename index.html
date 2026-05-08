@@ -257,12 +257,13 @@ function generateLessons(){
   students.forEach(stu=>{
     if(!stu.schedules||!stu.schedules.length) return;
     stu.schedules.forEach(sch=>{
-      let cur=new Date(start);
+      let cur=new Date(Math.max(start.getTime(),today.getTime()));
       while(cur<=end){
         if(cur.getDay()===sch.weekday){
           const ds=cur.toDateStr();
           const exists=existing.some(l=>
-            l.studentId===stu.id&&l.date===ds&&l.status!=='cancelled'&&l.status!=='leave'
+            l.studentId===stu.id&&l.date===ds
+            &&l.startHour===sch.startHour&&(l.startMinute||0)===(sch.startMinute||0)
           );
           if(!exists){
             existing.push({
@@ -289,6 +290,34 @@ function generateLessons(){
     return stu.schedules.some(sch=>sch.weekday===wd&&sch.startHour===l.startHour&&sch.startMinute===(l.startMinute||0))||l.status!=='scheduled';
   });
   Store.saveLessons(cleaned);
+}
+
+// ==================== SYNC STUDENT TO LESSONS ====================
+function syncStudentToLessons(stu){
+  const todayStr=C.today().toDateStr();
+  const lessons=Store.lessons();
+  let updated=0;
+  lessons.forEach(l=>{
+    if(l.studentId!==stu.id||l.status!=='scheduled'||l.date<todayStr) return;
+    const newFee=stu.defaultFee||Store.getCourseFee(stu.courseType||'institution');
+    if(l.plannedFee!==newFee){l.plannedFee=newFee;updated++;}
+    // Match schedule by weekday + same original time
+    const d=new Date(l.date);
+    const sch=stu.schedules?.find(s=>s.weekday===d.getDay()
+      &&s.startHour===l.startHour&&(s.startMinute||0)===(l.startMinute||0));
+    if(sch){
+      const newLoc=sch.location||stu.defaultLocation||'';
+      if(l.location!==newLoc){l.location=newLoc;updated++;}
+      if(l.startHour!==sch.startHour||(l.startMinute||0)!==(sch.startMinute||0)
+         ||l.endHour!==sch.endHour||(l.endMinute||0)!==(sch.endMinute||0)){
+        l.startHour=sch.startHour;l.startMinute=sch.startMinute||0;
+        l.endHour=sch.endHour;l.endMinute=sch.endMinute||0;
+        updated++;
+      }
+    }
+  });
+  if(updated>0) Store.saveLessons(lessons);
+  return updated;
 }
 
 // ==================== RENDER ENGINE ====================
@@ -392,7 +421,7 @@ function renderToday(){
           <div class="inner">
             <div class="time-col"><div class="t1">${fmt.time(l.startHour,l.startMinute)}</div><div class="t2">${fmt.time(l.endHour,l.endMinute)}</div></div>
             <div class="info-col">
-              <div class="nm">${student?.name||'未知'}${l.isAdjusted?' <span class="badge adjusted">已调整</span>':''}</div>
+              <div class="nm">${student?.name||'未知'} <span style="font-size:10px;font-weight:400;color:var(--sec)">${student?.courseType==='private'?'🏠':student?.courseType==='practice'?'🎹':'🏫'}</span>${l.isAdjusted?' <span class="badge adjusted">已调整</span>':''}</div>
               ${(l.location||campus)?`<div class="loc nav-loc" data-loc="${l.location||''}" data-campus="${l.campusId||''}" style="cursor:pointer;text-decoration:underline;text-decoration-color:var(--blue);text-underline-offset:2px">🧭 ${l.location||campus?.name||''} → 导航</div>`:''}
               <span class="badge ${bc}" style="margin-top:4px">${bt}</span>
             </div>
@@ -537,7 +566,7 @@ function renderStudents(){
     <span style="background:#f0f0f5;padding:4px 10px;border-radius:12px">🎹 陪练 ${pracCount}人</span>
     <span style="color:var(--sec);padding:4px 6px">共${totalActive}人</span>
   </div>`;
-	  html+=`<div style="padding:0 16px 8px;display:flex;justify-content:flex-end"><button class="btn btn-ghost btn-sm" id="btn-sync-fees" style="font-size:12px">🔄 同步课时费</button></div>`;
+	  html+=`<div style="padding:0 16px 8px;display:flex;justify-content:flex-end"><button class="btn btn-ghost btn-sm" id="btn-sync-fees" style="font-size:12px">🔄 同步到今日</button></div>`;
 
   html+=`<div class="filter-row" id="campus-filter">
     <span class="filter-pill${!studentCampusFilter?' active':''}" data-campus="">全部</span>`;
@@ -1063,16 +1092,8 @@ function showStudentEdit(student){
     // 排课价格全部归零 = 跟随学生默认价格
     data.schedules.forEach(sc=>{sc.fee=0;});
     Store.saveStudents(students);
-    // 每次保存都同步该学生所有未来课程的价格
-    const todayStr=C.today().toDateStr();
-    const lessons=Store.lessons();
-    let updated=0;
-    lessons.forEach(l=>{
-      if(l.studentId===data.id&&l.status==='scheduled'&&l.date>=todayStr&&l.plannedFee!==data.defaultFee){
-        l.plannedFee=data.defaultFee;updated++;
-      }
-    });
-    if(updated>0){Store.saveLessons(lessons);toast(`已同步 ${updated} 节课 → ¥${data.defaultFee}/节`);}
+	    const updated=syncStudentToLessons(data);
+	    if(updated>0) toast(`已同步 ${updated} 节课 → ¥${data.defaultFee}/节`);
     // Conflict detection
     const others=students.filter(x=>x.id!==data.id&&x.isActive!==false&&x.schedules?.length);
     const conflicts=[];
@@ -1129,7 +1150,7 @@ function showLessonEdit(lesson){
     <label>日期</label><input id="ef-l-date" type="date" value="${l.date}">
     <div class="form-row" style="margin-top:8px"><div><label>开始</label><div class="form-row fixed"><input id="ef-l-sh" type="number" value="${l.startHour}" min="6" max="22" style="width:55px;padding:6px"><span>:</span><input id="ef-l-sm" type="number" value="${l.startMinute||0}" min="0" max="45" step="15" style="width:55px;padding:6px"></div></div><div><label>结束</label><div class="form-row fixed"><input id="ef-l-eh" type="number" value="${l.endHour}" min="6" max="22" style="width:55px;padding:6px"><span>:</span><input id="ef-l-em" type="number" value="${l.endMinute||0}" min="0" max="45" step="15" style="width:55px;padding:6px"></div></div></div>
     <label style="margin-top:8px">地点</label><input id="ef-l-loc" value="${l.location||''}">
-    <label style="margin-top:8px">课时费</label><input id="ef-l-fee" type="number" value="${l.plannedFee||0}">
+    <label style="margin-top:8px">课时费</label><input id="ef-l-fee" type="number" value="${student?.defaultFee||l.plannedFee||0}">
   </div>
   <div class="form-sect"><h3>状态</h3><select id="ef-l-status"><option value="scheduled" ${l.status==='scheduled'?'selected':''}>待上课</option><option value="completed" ${l.status==='completed'?'selected':''}>已完成</option><option value="leave" ${l.status==='leave'?'selected':''}>请假</option><option value="cancelled" ${l.status==='cancelled'?'selected':''}>已取消</option></select>
 
@@ -1140,7 +1161,7 @@ function showLessonEdit(lesson){
     const status=overlay.querySelector('#ef-l-status').value;
     const lessons=Store.lessons();const idx=lessons.findIndex(x=>x.id===l.id);
     if(idx<0)return true;
-    lessons[idx].date=overlay.querySelector('#ef-l-date').value;lessons[idx].startHour=parseInt(overlay.querySelector('#ef-l-sh').value);lessons[idx].startMinute=parseInt(overlay.querySelector('#ef-l-sm').value);lessons[idx].endHour=parseInt(overlay.querySelector('#ef-l-eh').value);lessons[idx].endMinute=parseInt(overlay.querySelector('#ef-l-em').value);lessons[idx].location=overlay.querySelector('#ef-l-loc').value;lessons[idx].plannedFee=parseInt(overlay.querySelector('#ef-l-fee').value)||0;lessons[idx].status=status;lessons[idx].isAdjusted=true;lessons[idx].notes=overlay.querySelector('#ef-l-notes').value;
+    lessons[idx].date=overlay.querySelector('#ef-l-date').value;lessons[idx].startHour=parseInt(overlay.querySelector('#ef-l-sh').value);lessons[idx].startMinute=parseInt(overlay.querySelector('#ef-l-sm').value);lessons[idx].endHour=parseInt(overlay.querySelector('#ef-l-eh').value);lessons[idx].endMinute=parseInt(overlay.querySelector('#ef-l-em').value);lessons[idx].location=overlay.querySelector('#ef-l-loc').value;lessons[idx].plannedFee=parseInt(overlay.querySelector('#ef-l-fee').value)||0;const stuFee=student?.defaultFee||Store.getCourseFee(student?.courseType||'institution');if(lessons[idx].plannedFee>=200||lessons[idx].plannedFee<=0)lessons[idx].plannedFee=stuFee;lessons[idx].status=status;lessons[idx].isAdjusted=true;lessons[idx].notes=overlay.querySelector('#ef-l-notes').value;
     if(overlay.querySelector('#ef-l-permanent').checked&&student){const d=new Date(lessons[idx].date);const wd=d.getDay();const hasSch=student.schedules?student.schedules.some(sc=>sc.weekday===wd):false;if(!hasSch&&!student.schedules)student.schedules=[];if(!hasSch)student.schedules.push({weekday:wd,startHour:lessons[idx].startHour,startMinute:lessons[idx].startMinute,endHour:lessons[idx].endHour,endMinute:lessons[idx].endMinute,location:lessons[idx].location,fee:lessons[idx].plannedFee,campusId:lessons[idx].campusId});student.defaultFee=lessons[idx].plannedFee;student.defaultLocation=lessons[idx].location;const students=Store.students();const si=students.findIndex(x=>x.id===student.id);if(si>=0)students[si]=student;Store.saveStudents(students);generateLessons();}
     Store.saveLessons(lessons);return true;
   });
@@ -1215,7 +1236,7 @@ function bindEvents(){
   $$('[data-del-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();if(confirm('删除该校区？')){Store.saveCampuses(Store.campuses().filter(x=>x.id!==el.dataset.delCampus));render();}};});
   const mdc=$('#card-month-done');if(mdc)mdc.onclick=showMonthDoneSheet;
   const bd=$('#btn-bulk-done');if(bd)bd.onclick=()=>{const ds=selectedDate.toDateStr();const lessons=Store.lessons();let count=0;lessons.forEach(l=>{if(l.date===ds&&l.status==='scheduled'){l.status='completed';count++;}});Store.saveLessons(lessons);toast(`✓ 已标记 ${count} 节完成`);render();};
-  const sf=$('#btn-sync-fees');if(sf)sf.onclick=()=>{const todayStr=C.today().toDateStr();const lessons=Store.lessons();const students=Store.students();let updated=0;lessons.forEach(l=>{if(l.status!=='scheduled'||l.date<todayStr)return;const stu=students.find(s=>s.id===l.studentId);if(!stu)return;const newFee=stu.defaultFee||Store.getCourseFee(stu.courseType||'institution');if(l.plannedFee!==newFee){l.plannedFee=newFee;updated++;}});Store.saveLessons(lessons);toast(`✅ 已同步 ${updated} 节课时费`);if(updated>0)render();};
+  const sf=$('#btn-sync-fees');if(sf)sf.onclick=()=>{const students=Store.students();let total=0;students.forEach(s=>{total+=syncStudentToLessons(s);});if(total>0){toast(`✅ 已同步 ${total} 处变更`);render();}else{toast('所有课程已是最新');}};
   const ib=$('#btn-import');if(ib)ib.onclick=showImport;
 }
 
