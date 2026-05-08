@@ -249,6 +249,7 @@ async function calcAllCommutes(lessons){
 // ==================== LESSON GENERATION ====================
 function generateLessons(){
   const today=C.today();
+  const start=new Date(today.getFullYear(),today.getMonth(),1);
   const end=C.addDays(today,(Store.get('weeks')||4)*7);
   const students=Store.students().filter(s=>s.isActive!==false);
   const existing=Store.lessons();
@@ -256,7 +257,7 @@ function generateLessons(){
   students.forEach(stu=>{
     if(!stu.schedules||!stu.schedules.length) return;
     stu.schedules.forEach(sch=>{
-      let cur=new Date(today);
+      let cur=new Date(start);
       while(cur<=end){
         if(cur.getDay()===sch.weekday){
           const ds=cur.toDateStr();
@@ -324,7 +325,7 @@ function renderTabbar(){
 function renderToday(){
   const lessons=getDayLessons(selectedDate);
   let html='<div class="date-strip" id="date-strip">';
-  for(let i=-3;i<11;i++){
+  for(let i=1-C.today().getDate();i<11;i++){
     const d=C.addDays(C.today(),i);
     const cls=['date-chip'];
     if(C.sameDay(d,C.today()))cls.push('today');
@@ -346,7 +347,7 @@ function renderToday(){
     const me=new Date(now.getFullYear(),now.getMonth()+1,1);
     const allLessons=Store.lessons();
     const monthDone=allLessons.filter(l=>l.date>=ms.toDateStr()&&l.date<me.toDateStr()&&l.status==='completed');
-    const monthScheduled=allLessons.filter(l=>l.date>=ms.toDateStr()&&l.date<me.toDateStr()&&l.status==='scheduled');
+    const monthScheduled=allLessons.filter(l=>l.date>=C.today().toDateStr()&&l.date<me.toDateStr()&&l.status==='scheduled');
     const monthIncome=monthDone.reduce((s,l)=>s+(l.actualFee||l.plannedFee||0),0);
     // Weekly stats
     const mon=C.monday(now);const monStr=mon.toDateStr();const weekEnd=C.addDays(mon,7).toDateStr();
@@ -686,7 +687,7 @@ function renderSettings(){
   html+=`<div style="text-align:center;padding:24px 16px">
     <button id="btn-clear" style="font-size:12px;color:var(--sec)">🗑 清除全部数据</button>
   </div>`;
-  html+=`<div style="text-align:center;padding-bottom:24px"><p style="font-size:12px;color:var(--sec)">家教排课 PWA · 通勤时间通过地图自动计算 · v31</p></div>`;
+  html+=`<div style="text-align:center;padding-bottom:24px"><p style="font-size:12px;color:var(--sec)">家教排课 PWA · 通勤时间通过地图自动计算 · v33</p></div>`;
   return html;
 }
 
@@ -1165,6 +1166,78 @@ function dateTitle(d){const today=C.today();if(C.sameDay(d,today))return'今天'
 function toast(msg){const el=document.createElement('div');el.className='toast';el.textContent=msg;$('#toast-container').appendChild(el);setTimeout(()=>{el.style.opacity='0';setTimeout(()=>el.remove(),300);},2000);}
 async function exportWeekImage(){const grid=$('#week-grid');if(!grid)return toast('请先切换到周视图');try{const canvas=await html2canvas(grid,{backgroundColor:'#ffffff',scale:2});const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));if(navigator.share){const file=new File([blob],`课表_${fmt.date(C.monday(selectedDate))}.png`,{type:'image/png'});await navigator.share({files:[file],title:'周课表'});}else{const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`课表_${fmt.date(C.monday(selectedDate))}.png`;a.click();}toast('导出成功 ✓');}catch(e){toast('导出失败');}}
 
+// ==================== DEFAULT DATA ====================
+function loadDefaultData(){
+  const text=`周一
+糖果 16:30-17:15 星河丹提F3-1-1402
+周伽好 17:45-18:30 华富村
+梁蕾 19:30-20:15 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+吴玮尧 20:15-21:00 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+
+周二
+休息
+
+周三
+梁蕾 13:15-14:00 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+熙熙妈妈 14:30-15:15 福田中心书城北校区（福田区福中一路中心书城2014号北区2楼N234号琴童家教）
+糖果 16:30-17:15 星河丹提F3-1-1402
+周伽好 18:00-18:45 华富村
+黄玥然 19:15-20:00 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+黄梓萌 20:00-20:45 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+
+周四
+杨玲玲 15:00-15:45 罗湖书城21楼校区（罗湖区深南东路5033号金山大厦：罗湖书城21楼2106室）
+周伽好 17:00-17:45 华富村
+俞晶涵 18:15-19:00 罗湖书城21楼校区（罗湖区深南东路5033号金山大厦：罗湖书城21楼2106室）
+
+周五
+熙熙妈妈 13:45-14:30 福田中心书城北校区（福田区福中一路中心书城2014号北区2楼N234号琴童家教）
+郑舒越 17:00-17:45 润城花园3栋1单元301
+陈彦童 20:00-20:45 光明传麒山
+
+周六
+黄小姐 09:45-10:30 深圳青少年活动中心（福田区红荔路1001号深圳青少年活动中心青年广场西厅6楼606、604室）
+黄奕钧 10:30-11:15 深圳青少年活动中心（福田区红荔路1001号深圳青少年活动中心青年广场西厅6楼606、604室）
+孙浩凯 12:20-13:05 南山华侨城校区（华侨城兴隆西街中旅广场群楼华·生活馆319，沃尔玛楼上）
+郑紫玥 14:00-14:45 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+李宥希 15:00-15:45 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+李媛 16:30-17:15 罗湖书城21楼校区（罗湖区深南东路5033号金山大厦：罗湖书城21楼2106室）
+洪泽璇 17:00-17:45 成教部"玖音和"（西丽留仙大道3288号宝能环球汇购物中心B馆L2层L2020号铺）
+杨君睿 19:00-19:45 西丽宝能环球汇校区（西丽留仙大道3288号宝能环球汇购物中心B馆L2层L2030号铺）
+张美玲 19:45-20:30 西丽宝能环球汇校区（西丽留仙大道3288号宝能环球汇购物中心B馆L2层L2030号铺）
+
+周日
+东尼 09:00-09:45 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+黄泽晴 09:45-10:30 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+李栩 10:30-11:15 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+塔莉 11:15-12:00 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+郑紫玥 12:10-12:55 福田区益田岁宝校区（福田区福强路3017号益田大厦岁宝益田生活馆2楼B010号）
+赵子健 13:15-14:00 福田中心书城北校区（福田区福中一路中心书城2014号北区2楼N234号琴童家教）
+黎佳峻 14:00-14:45 福田中心书城南校区（福田区福中一路中心书城2014号南区1楼S156号-琴童家教）
+黎凡宇 14:00-14:45 福田中心书城南校区（福田区福中一路中心书城2014号南区1楼S156号-琴童家教）
+冯昱皓 16:00-16:45 深铁懿府`;
+  const result=parseSchedule(text);
+  if(!result.students.length) return;
+  // Set course types for specific students
+  const privateList=['郑舒越','周伽好']; // 家教课 students
+  result.students.forEach(s=>{
+    if(privateList.includes(s.name)){
+      s.courseType='private';
+      s.defaultFee=95;
+      s.schedules.forEach(sc=>{sc.fee=95;});
+    }
+  });
+  const students=result.students;
+  const lessons=result.lessons.map(l=>{
+    const stu=students.find(s=>s.name===l.studentName);
+    return stu?{...l,studentId:stu.id}:null;
+  }).filter(Boolean);
+  Store.saveStudents(students);
+  Store.saveLessons(lessons);
+  generateLessons();
+  toast('📋 已加载默认课表');
+}
+
 // ==================== INIT ====================
 // 数据迁移：检测旧版格式并清除
 const oldData=Store.get('students');
@@ -1178,9 +1251,9 @@ fixStudents.forEach(s=>{if(s.defaultFee>=200){s.defaultFee=80;fixedS++;}});
 fixLessons.forEach(l=>{if(l.plannedFee>=200){const stu=fixStudents.find(s=>s.id===l.studentId);l.plannedFee=stu?.defaultFee||80;fixedL++;}});
 if(fixedS>0)Store.saveStudents(fixStudents);
 if(fixedL>0)Store.saveLessons(fixLessons);
-// 首次使用自动弹出导入窗口
-if(!Store.campuses().length||!Store.students().length){
-  setTimeout(()=>showImport(),500);
+// 首次使用自动加载默认课表
+if(!Store.students().length){
+  loadDefaultData();
 }
 generateLessons();
 // 滚动到今天
