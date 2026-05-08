@@ -99,11 +99,7 @@ label{font-size:13px;color:var(--sec);display:block;margin-bottom:4px}
 .empty{text-align:center;padding:40px 20px;color:var(--sec)}
 .empty .title{font-size:16px;font-weight:600;margin-bottom:4px;color:var(--text)}
 .empty .sub{font-size:14px}
-.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--sep);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
 .sch-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:#007AFF10;color:var(--blue);border-radius:12px;font-size:12px;margin:2px 4px 2px 0}
-.sch-chip .del{font-size:14px;cursor:pointer;opacity:.6}
-.sch-chip .del:hover{opacity:1}
 .commute-auto{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--green);margin-top:4px}
 .form-hint{font-size:12px;color:var(--sec);margin-top:4px;line-height:1.5}
 .filter-pill{padding:5px 12px;border-radius:14px;font-size:13px;background:var(--card);color:var(--sec);border:1px solid transparent;white-space:nowrap;cursor:pointer}
@@ -190,39 +186,16 @@ async function geocodeAddr(addr){
   return null;
 }
 
-// GPS
-let gpsPos=null;
-function getGPS(){
-  return new Promise(resolve=>{
-    if(!navigator.geolocation){resolve(null);return;}
-    navigator.geolocation.getCurrentPosition(
-      pos=>{gpsPos={lat:pos.coords.latitude,lng:pos.coords.longitude};resolve(gpsPos);},
-      ()=>{resolve(null);},
-      {enableHighAccuracy:true,timeout:8000,maximumAge:300000}
-    );
-  });
-}
-
-// Unified commute: from=addr string OR {lat,lng} object
+// Calculate route between two addresses
 async function calcRoute(from,toAddr){
-  if(!toAddr) return 0;
-  let key,url;
-  if(typeof from==='object'&&from.lat){
-    const to=await geocodeAddr(toAddr);
-    if(!to) return 0;
-    key=`gps|${from.lat.toFixed(4)},${from.lng.toFixed(4)}|${to.lat.toFixed(4)},${to.lng.toFixed(4)}`;
-    url=`https://router.project-osrm.org/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}?overview=false`;
-  }else{
-    if(!from||from===toAddr) return 0;
-    const [f,t]=await Promise.all([geocodeAddr(from),geocodeAddr(toAddr)]);
-    if(!f||!t) return 0;
-    key=`${from}|${toAddr}`;
-    url=`https://router.project-osrm.org/route/v1/driving/${f.lng},${f.lat};${t.lng},${t.lat}?overview=false`;
-  }
+  if(!from||!toAddr||from===toAddr) return 0;
+  const [f,t]=await Promise.all([geocodeAddr(from),geocodeAddr(toAddr)]);
+  if(!f||!t) return 0;
+  const key=`${from}|${toAddr}`;
   const cached=Store.route(key);
   if(cached!==null) return cached;
   try{
-    const resp=await fetch(url);
+    const resp=await fetch(`https://router.project-osrm.org/route/v1/driving/${f.lng},${f.lat};${t.lng},${t.lat}?overview=false`);
     const data=await resp.json();
     if(data.routes?.length){
       const mins=Math.round(data.routes[0].duration/60);
@@ -449,27 +422,32 @@ async function calcAndShowCommute(){
   const lessons=getDayLessons(selectedDate);
   if(lessons.length===0) return;
 
-  // GPS → first lesson
-  const gpsBar=$('#gps-commute-bar');
-  if(gpsBar){
-    if(!gpsPos) await getGPS();
-    if(gpsPos){
-      const toAddr=addrFor(lessons[0]);
-      if(toAddr){
-        const gpsTime=await calcRoute(gpsPos,toAddr);
-        if(gpsTime>0){
-          const metroTime=Math.round(gpsTime*1.1);
-          const nowMin=new Date().getHours()*60+new Date().getMinutes();
-          const startMin=lessons[0].startHour*60+lessons[0].startMinute;
-          const available=startMin-nowMin;
-          const urgent=metroTime>available;
-          gpsBar.className='commute-bar '+(urgent?'error':'ok');
-          gpsBar.style.display='flex';
-          gpsBar.innerHTML=`📍 <b>从我出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min · 现在${fmt.time(new Date().getHours(),new Date().getMinutes())} · ${urgent?'⚠️ 出发可能来不及！':'来得及'} <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="gps-nav-btn">🧭 导航</button>`;
-          const gpsNav=$('#gps-nav-btn');
-          if(gpsNav) gpsNav.onclick=(e)=>{e.stopPropagation();openGaodeNav(lessons[0].location,lessons[0].campusId);};
-        }
+  // Home → first lesson
+  const homeBar=$('#gps-commute-bar');
+  if(homeBar&&lessons.length>0){
+    const homeAddr=Store.get('homeAddr')||'光明区凤凰城地铁站';
+    const toAddr=addrFor(lessons[0]);
+    if(toAddr){
+      const routeTime=await calcRoute(homeAddr,toAddr);
+      const metroTime=Math.round(routeTime*1.1);
+      const totalTime=20+metroTime; // 20min步行到地铁站 + 地铁时间
+      const nowMin=new Date().getHours()*60+new Date().getMinutes();
+      const startMin=lessons[0].startHour*60+lessons[0].startMinute;
+      const available=startMin-nowMin;
+      const urgent=totalTime>available;
+      // Suggested departure time
+      let depH=lessons[0].startHour,depM=lessons[0].startMinute-totalTime;
+      while(depM<0){depM+=60;depH-=1;}
+      homeBar.style.display='flex';
+      if(routeTime>0){
+        homeBar.className='commute-bar '+(urgent?'error':'ok');
+        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min (+20min步行) · 建议${fmt.time(depH,depM)}出发 · ${urgent?'⚠️ 来不及！':'来得及'} <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="gps-nav-btn">🧭 导航</button>`;
+      }else{
+        homeBar.className='commute-bar info';
+        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} · 通勤未知 · 建议${fmt.time(depH,depM)}出发 (20min步行) <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="gps-nav-btn">🧭 导航</button>`;
       }
+      const gpsNav=$('#gps-nav-btn');
+      if(gpsNav) gpsNav.onclick=(e)=>{e.stopPropagation();openGaodeNav(lessons[0].location,lessons[0].campusId);};
     }
   }
 
@@ -619,7 +597,7 @@ function renderStudentDetail(sid){
     html+='</div>';
   }
   $('#main').innerHTML=html;
-  bindStudentDetailEvents(sid);
+  bindStudentDetailEvents();
 }
 
 // ==================== FINANCE ====================
@@ -668,6 +646,11 @@ function renderSettings(){
   <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">排课设置</h3>
     <div style="display:flex;align-items:center"><span style="flex:1">自动生成未来</span><select id="set-weeks" style="width:80px;text-align:center">${[2,4,6,8].map(w=>`<option value="${w}" ${weeks===w?'selected':''}>${w}周</option>`).join('')}</select></div>
     <p class="form-hint">根据学生每周排课自动生成对应周数的课程</p>
+  </div>
+  <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">🏠 我的位置</h3>
+    <input id="set-home-addr" value="${Store.get('homeAddr')||'光明区凤凰城地铁站'}" placeholder="输入家附近的地铁站">
+    <p class="form-hint">通勤从家出发计算：家→地铁站步行固定20分钟 + 地铁时间到第一节课</p>
+    <button class="btn btn-ghost btn-sm" id="btn-save-home" style="margin-top:8px">保存位置</button>
   </div>
   <div class="card"><h3 style="font-size:15px;font-weight:600;margin-bottom:12px">校区管理</h3>`;
   campuses.forEach(c=>{html+=`<div style="display:flex;align-items:center;padding:10px 0;border-bottom:1px solid var(--sep)"><div style="flex:1"><div style="font-weight:500">🏫 ${c.name}</div><div style="font-size:13px;color:var(--sec)">${c.address||''}</div></div><button class="btn btn-ghost btn-sm" data-edit-campus="${c.id}">编辑</button><button class="btn btn-ghost btn-sm" data-del-campus="${c.id}" style="color:var(--red)">删</button></div>`;});
@@ -1131,13 +1114,14 @@ function bindEvents(){
   const ac=$('#btn-add-campus');if(ac)ac.onclick=()=>showCampusEdit();
   const st=$('#btn-save-types');if(st)st.onclick=()=>{Store.saveCourseTypes({private:parseInt($('#set-fee-private').value)||100,institution:parseInt($('#set-fee-institution').value)||80,practice:parseInt($('#set-fee-practice').value)||75});toast('默认价格已保存 ✓');};
   const sw=$('#set-weeks');if(sw)sw.onchange=()=>{Store.set('weeks',parseInt(sw.value));generateLessons();toast(`排课周数已更新：${sw.value}周`);};
+  const shome=$('#btn-save-home');if(shome)shome.onclick=()=>{const v=$('#set-home-addr').value.trim();Store.set('homeAddr',v||'光明区凤凰城地铁站');geocodeAddr(v);toast('✅ 家位置已保存');};
   const cb=$('#btn-clear');if(cb)cb.onclick=()=>{if(confirm('⚠️ 清除全部数据？')){if(confirm('所有学生、排课、财务记录将永久删除，无法恢复。确认？')){localStorage.clear();render();toast('已清除全部数据');}}};
   $$('[data-edit-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const c=Store.campuses().find(x=>x.id===el.dataset.editCampus);if(c)showCampusEdit(c);};});
   $$('[data-del-campus]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();if(confirm('删除该校区？')){Store.saveCampuses(Store.campuses().filter(x=>x.id!==el.dataset.delCampus));render();}};});
   const ib=$('#btn-import');if(ib)ib.onclick=showImport;
 }
 
-function bindStudentDetailEvents(sid){
+function bindStudentDetailEvents(){
   $('#btn-back-students')?.addEventListener('click',()=>render());
   $$('[data-edit-student]').forEach(el=>{el.onclick=function(){const s=Store.students().find(x=>x.id===this.dataset.editStudent);if(s)showStudentEdit(s);};});
   $$('[data-delete-student]').forEach(el=>{el.onclick=function(){if(confirm('删除该学生及所有课程记录？')){Store.saveStudents(Store.students().filter(x=>x.id!==this.dataset.deleteStudent));Store.saveLessons(Store.lessons().filter(x=>x.studentId!==this.dataset.deleteStudent));render();}};});
