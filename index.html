@@ -431,10 +431,13 @@ function renderToday(){
             </div>
             <div class="fee-col">
               <div class="fee">¥${l.plannedFee}</div>
-              ${l.status==='scheduled'?`<button class="btn btn-sm" data-quick-done="${l.id}" style="color:var(--green);font-size:20px;padding:2px 6px;margin-top:4px">✓</button>`:''}
+              ${l.status==='scheduled'?`<button class="btn btn-sm" data-quick-leave="${l.id}" style="color:var(--orange);font-size:20px;padding:2px 4px;margin-top:4px;margin-right:10px">✕</button><button class="btn btn-sm" data-quick-done="${l.id}" style="color:var(--green);font-size:20px;padding:2px 6px;margin-top:4px">✓</button>`:''}
             </div>
-            ${i>0&&!isPast&&l.status==='scheduled'?`<div class="commute-inline" id="commute-inline-${i}" style="display:none;font-size:11px;padding:3px 0 0;color:var(--sec)"></div>`:''}
           </div>`;
+        // Commute bar below card — from current to next lesson
+        if(i<activeLessons.length-1&&!isPast&&activeLessons[i+1].status==='scheduled'){
+          html+=`<div class="commute-bar" data-commute="${i}" style="display:none">🔄 计算中...</div>`;
+        }
         html+='</div>';
       });
 	      // 请假课程（灰显在底部）
@@ -533,38 +536,39 @@ async function calcAndShowCommute(){
     }
   }
 
-  // Between-lesson commutes → show in destination lesson card
+  // Between-lesson commutes → bar below card i, commute from i to i+1
   if(lessons.length<2) return;
   const commutes=await calcAllCommutes(lessons);
   if(seq!==_commuteSeq) return;
-  for(let i=0;i<lessons.length-1;i++){
+  $$('[data-commute]').forEach(el=>{
+    const i=parseInt(el.dataset.commute);
     const a=lessons[i],b=lessons[i+1];
-    if(b.status!=='scheduled') continue;
-    const el=document.getElementById('commute-inline-'+(i+1));
-    if(!el) continue;
+    if(b.status!=='scheduled') return;
     const gap=(b.startHour*60+b.startMinute)-(a.endHour*60+a.endMinute);
     const metroNeed=commutes[i]||0;
     const cA=Store.campuses().find(x=>x.id===a.campusId);
+    const cB=Store.campuses().find(x=>x.id===b.campusId);
     const locA=a.location||cA?.name||'?';
-    el.style.display='block';
-    let color='var(--green)';
+    const locB=b.location||cB?.name||'?';
+    el.style.display='flex';
+    let color='var(--green)',cls='commute-bar ok';
     let text='';
     if(!metroNeed){
-      text=`📍 从${locA}出发 · 间隔${gap}min`;
+      text=`📍 ${locA} → ${locB} · 间隔${gap}min`;
     }else if(metroNeed>gap){
-      color='var(--red)';
-      text=`🚇 从${locA}出发约${metroNeed}min ≥ 间隔${gap}min，来不及！`;
+      cls='commute-bar error';color='var(--red)';
+      text=`🚇 ${locA} → ${locB} 约${metroNeed}min ≥ ${gap}min，来不及！`;
     }else if(gap-metroNeed<=10){
-      color='var(--orange)';
+      cls='commute-bar info';
       let sugH=b.startHour,sugM=b.startMinute-metroNeed;
       if(sugM<0){sugM+=60;sugH-=1;}
-      text=`🚇 从${locA}出发约${metroNeed}min，仅剩${gap-metroNeed}min · 建议${fmt.time(sugH,sugM)}出发`;
+      text=`🚇 ${locA} → ${locB} 约${metroNeed}min，仅剩${gap-metroNeed}min · 建议${fmt.time(sugH,sugM)}出发`;
     }else{
-      text=`🚇 从${locA}出发约${metroNeed}min · 间隔${gap}min`;
+      text=`🚇 ${locA} → ${locB} 约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
     }
-    el.style.cssText=`display:block;font-size:11px;padding:3px 0 0;color:${color}`;
+    el.className=cls;
     el.textContent=text;
-  }
+  });
 }
 
 // ==================== STUDENTS ====================
@@ -1252,6 +1256,7 @@ function bindEvents(){
   // Long press -> mark completed
   $$('.lesson-card').forEach(el=>{let t;el.addEventListener('touchstart',()=>{t=setTimeout(()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l&&l.status==='scheduled'){l.status='completed';Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));navigator.vibrate&&navigator.vibrate(15);toast('✓ 已标记完成');render();}},600);});el.addEventListener('touchend',()=>clearTimeout(t));el.addEventListener('touchmove',()=>clearTimeout(t));});
   // Quick-complete button
+  $$('[data-quick-leave]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const l=Store.lessons().find(x=>x.id===el.dataset.quickLeave);if(l&&l.status==='scheduled'){l.status='leave';Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));toast('✕ 已请假');render();}};});
   $$('[data-quick-done]').forEach(el=>{el.onclick=(e)=>{e.stopPropagation();const l=Store.lessons().find(x=>x.id===el.dataset.quickDone);if(l&&l.status==='scheduled'){l.status='completed';Store.saveLessons(Store.lessons().map(x=>x.id===l.id?l:x));toast('✓ 已完成');render();}};});
   // Week nav
   const pw=$('#btn-prev-week');if(pw)pw.onclick=()=>{selectedDate=C.addDays(selectedDate,-7);render();};
