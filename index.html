@@ -19,7 +19,7 @@ input,select,textarea{font:inherit;border:1px solid var(--sep);border-radius:8px
 input:focus,select:focus,textarea:focus{border-color:var(--blue)}
 input[type="number"]{-moz-appearance:textfield}
 label{font-size:13px;color:var(--sec);display:block;margin-bottom:4px}
-#app{display:flex;flex-direction:column;height:100vh}
+#app{display:flex;flex-direction:column;height:100vh;padding-top:env(safe-area-inset-top,0px)}
 #main{flex:1;overflow-y:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch}
 #tabbar{display:flex;background:var(--card);border-top:1px solid var(--sep);padding:6px 0 var(--safe-b);z-index:10}
 .tab{flex:1;display:flex;flex-direction:column;align-items:center;padding:4px 0;color:var(--sec);font-size:10px;transition:color .2s}
@@ -433,11 +433,8 @@ function renderToday(){
               <div class="fee">¥${l.plannedFee}</div>
               ${l.status==='scheduled'?`<button class="btn btn-sm" data-quick-done="${l.id}" style="color:var(--green);font-size:20px;padding:2px 6px;margin-top:4px">✓</button>`:''}
             </div>
+            ${i>0&&!isPast&&l.status==='scheduled'?`<div class="commute-inline" id="commute-inline-${i}" style="display:none;font-size:11px;padding:3px 0 0;color:var(--sec)"></div>`:''}
           </div>`;
-        // Commute placeholder - filled async
-        if(i<activeLessons.length-1&&!isPast){
-          html+=`<div class="commute-bar info" data-commute="${i}" style="display:none">🔄 计算通勤中...</div>`;
-        }
         html+='</div>';
       });
 	      // 请假课程（灰显在底部）
@@ -500,63 +497,74 @@ function renderWeekView(){
   return html;
 }
 
+let _commuteSeq=0;
 async function calcAndShowCommute(){
-  const lessons=getDayLessons(selectedDate);
+  const seq=++_commuteSeq;  // guard against stale async results
+  const all=getDayLessons(selectedDate);
+  const lessons=all.filter(l=>l.status!=='leave');  // match renderToday activeLessons
   if(lessons.length===0) return;
 
-  // Home → first lesson
+  // Home → first scheduled lesson
   const homeBar=$('#home-commute-bar');
-  if(homeBar&&lessons.length>0){
+  const firstScheduled=lessons.find(l=>l.status==='scheduled');
+  if(homeBar&&firstScheduled){
     const homeAddr=Store.get('homeAddr')||'深圳市光明区光明街道牛山路13号怡景一期';
-    const toAddr=addrFor(lessons[0]);
+    const toAddr=addrFor(firstScheduled);
     if(toAddr){
       const metroTime=await calcRoute(homeAddr,toAddr);
+      if(seq!==_commuteSeq) return;
       const nowMin=new Date().getHours()*60+new Date().getMinutes();
-      const startMin=lessons[0].startHour*60+lessons[0].startMinute;
+      const startMin=firstScheduled.startHour*60+firstScheduled.startMinute;
       const available=startMin-nowMin;
       const urgent=metroTime>available;
       // Suggested departure time
-      let depH=lessons[0].startHour,depM=lessons[0].startMinute-metroTime;
+      let depH=firstScheduled.startHour,depM=firstScheduled.startMinute-metroTime;
       while(depM<0){depM+=60;depH-=1;}
       homeBar.style.display='flex';
       if(metroTime>0){
         homeBar.className='commute-bar '+(urgent?'error':'ok');
-        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} 🚇约${metroTime}min · 建议${fmt.time(depH,depM)}出发 · 现在${fmt.time(new Date().getHours(),new Date().getMinutes())} · ${urgent?'⚠️ 来不及！':'来得及'} <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="home-nav-btn">🧭 导航</button>`;
+        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${firstScheduled.location||'上课地点'} 🚇约${metroTime}min · 建议${fmt.time(depH,depM)}出发 · 现在${fmt.time(new Date().getHours(),new Date().getMinutes())} · ${urgent?'⚠️ 来不及！':'来得及'} <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="home-nav-btn">🧭 导航</button>`;
       }else{
         homeBar.className='commute-bar info';
-        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${lessons[0].location||'上课地点'} · 未能计算地铁时间 · <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="home-nav-btn">🧭 导航</button>`;
+        homeBar.innerHTML=`🏠 <b>从家出发</b> → ${firstScheduled.location||'上课地点'} · 未能计算地铁时间 · <button class="btn btn-sm" style="color:var(--blue);margin-left:auto;white-space:nowrap" id="home-nav-btn">🧭 导航</button>`;
       }
       const homeNav=$('#home-nav-btn');
-      if(homeNav) homeNav.onclick=(e)=>{e.stopPropagation();openGaodeNav(lessons[0].location,lessons[0].campusId);};
+      if(homeNav) homeNav.onclick=(e)=>{e.stopPropagation();openGaodeNav(firstScheduled.location,firstScheduled.campusId);};
     }
   }
 
-  // Between-lesson commutes
+  // Between-lesson commutes → show in destination lesson card
   if(lessons.length<2) return;
   const commutes=await calcAllCommutes(lessons);
-  $$('[data-commute]').forEach(el=>{
-    const i=parseInt(el.dataset.commute);
+  if(seq!==_commuteSeq) return;
+  for(let i=0;i<lessons.length-1;i++){
     const a=lessons[i],b=lessons[i+1];
+    if(b.status!=='scheduled') continue;
+    const el=document.getElementById('commute-inline-'+(i+1));
+    if(!el) continue;
     const gap=(b.startHour*60+b.startMinute)-(a.endHour*60+a.endMinute);
     const metroNeed=commutes[i]||0;
-    const locA=a.location||'A',locB=b.location||'B';
-    el.style.display='flex';
+    const cA=Store.campuses().find(x=>x.id===a.campusId);
+    const locA=a.location||cA?.name||'?';
+    el.style.display='block';
+    let color='var(--green)';
+    let text='';
     if(!metroNeed){
-      el.className='commute-bar ok';
-      el.textContent=`📍 ${locA}→${locB} · 间隔${gap}min`;
+      text=`📍 从${locA}出发 · 间隔${gap}min`;
     }else if(metroNeed>gap){
-      el.className='commute-bar error';
-      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min ≥ ${gap}min，来不及！`;
+      color='var(--red)';
+      text=`🚇 从${locA}出发约${metroNeed}min ≥ 间隔${gap}min，来不及！`;
     }else if(gap-metroNeed<=10){
-      el.className='commute-bar info';
+      color='var(--orange)';
       let sugH=b.startHour,sugM=b.startMinute-metroNeed;
       if(sugM<0){sugM+=60;sugH-=1;}
-      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min，仅剩${gap-metroNeed}min · 建议${fmt.time(sugH,sugM)}出发`;
+      text=`🚇 从${locA}出发约${metroNeed}min，仅剩${gap-metroNeed}min · 建议${fmt.time(sugH,sugM)}出发`;
     }else{
-      el.className='commute-bar ok';
-      el.textContent=`🚇 ${locA}→${locB} 约${metroNeed}min · 间隔${gap}min · 余${gap-metroNeed}min`;
+      text=`🚇 从${locA}出发约${metroNeed}min · 间隔${gap}min`;
     }
-  });
+    el.style.cssText=`display:block;font-size:11px;padding:3px 0 0;color:${color}`;
+    el.textContent=text;
+  }
 }
 
 // ==================== STUDENTS ====================
