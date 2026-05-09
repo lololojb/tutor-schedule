@@ -305,7 +305,7 @@ function syncStudentToLessons(stu){
     const d=new Date(l.date);
     let sch=stu.schedules?.find(s=>s.weekday===d.getDay()
       &&s.startHour===l.startHour&&(s.startMinute||0)===(l.startMinute||0));
-    if(!sch) sch=stu.schedules?.find(s=>s.weekday===d.getDay());
+    if(!sch){const sameDay=stu.schedules?.filter(s=>s.weekday===d.getDay());if(sameDay?.length===1) sch=sameDay[0];}
     if(sch){
       const newLoc=sch.location||stu.defaultLocation||'';
       if(l.location!==newLoc){l.location=newLoc;updated++;}
@@ -870,7 +870,7 @@ function showImport(){
     result.lessons.forEach(newL=>{
       const stu=existingStudents.find(s=>s.name===newL.studentName);
       if(!stu) return;
-      const exists=existingLessons.some(l=>l.studentId===stu.id&&l.date===newL.date&&l.status!=='cancelled'&&l.status!=='leave');
+      const exists=existingLessons.some(l=>l.studentId===stu.id&&l.date===newL.date&&l.startHour===newL.startHour&&(l.startMinute||0)===(newL.startMinute||0)&&l.status!=='cancelled'&&l.status!=='leave');
       if(!exists){
         existingLessons.push({...newL,studentId:stu.id});
       }
@@ -953,13 +953,13 @@ function parseSchedule(text){
     }
 
     // Create lesson for next occurrence (skip for suspended/leave/uncertain)
-    if(!isSuspended&&!isUncertain){
+    if(!isSuspended&&!isUncertain&&!isLeave){
       const today=C.today();
       const targetDate=new Date(today);
       const currentDay=targetDate.getDay();
       let daysUntil=currentWeekday-currentDay;
       if(daysUntil<0) daysUntil+=7;
-      if(daysUntil===0&&targetDate.getHours()>eh) daysUntil=7;
+      if(daysUntil===0&&new Date().getHours()>eh) daysUntil=7;
       targetDate.setDate(targetDate.getDate()+daysUntil);
       lessons.push({studentName:name,id:Store.uid(),date:targetDate.toDateStr(),startHour:sh,startMinute:sm,endHour:eh,endMinute:em,location,plannedFee:80,campusId:null,status:'scheduled',isAdjusted:false,notes:note||''});
     }
@@ -1185,7 +1185,7 @@ function showLessonEdit(lesson){
     <label>日期</label><input id="ef-l-date" type="date" value="${l.date}">
     <div class="form-row" style="margin-top:8px"><div><label>开始</label><div class="form-row fixed"><input id="ef-l-sh" type="number" value="${l.startHour}" min="6" max="22" style="width:55px;padding:6px"><span>:</span><input id="ef-l-sm" type="number" value="${l.startMinute||0}" min="0" max="45" step="15" style="width:55px;padding:6px"></div></div><div><label>结束</label><div class="form-row fixed"><input id="ef-l-eh" type="number" value="${l.endHour}" min="6" max="22" style="width:55px;padding:6px"><span>:</span><input id="ef-l-em" type="number" value="${l.endMinute||0}" min="0" max="45" step="15" style="width:55px;padding:6px"></div></div></div>
     <label style="margin-top:8px">地点</label><input id="ef-l-loc" value="${l.location||''}">
-    <label style="margin-top:8px">课时费</label><input id="ef-l-fee" type="number" value="${student?.defaultFee||l.plannedFee||0}">
+    <label style="margin-top:8px">课时费</label><input id="ef-l-fee" type="number" value="${l.plannedFee||student?.defaultFee||0}">
   </div>
   <div class="form-sect"><h3>状态</h3><select id="ef-l-status"><option value="scheduled" ${l.status==='scheduled'?'selected':''}>待上课</option><option value="completed" ${l.status==='completed'?'selected':''}>已完成</option><option value="leave" ${l.status==='leave'?'selected':''}>请假</option><option value="cancelled" ${l.status==='cancelled'?'selected':''}>已取消</option></select>
 
@@ -1197,8 +1197,9 @@ function showLessonEdit(lesson){
     const lessons=Store.lessons();const idx=lessons.findIndex(x=>x.id===l.id);
     if(idx<0)return true;
     lessons[idx].date=overlay.querySelector('#ef-l-date').value;lessons[idx].startHour=parseInt(overlay.querySelector('#ef-l-sh').value);lessons[idx].startMinute=parseInt(overlay.querySelector('#ef-l-sm').value);lessons[idx].endHour=parseInt(overlay.querySelector('#ef-l-eh').value);lessons[idx].endMinute=parseInt(overlay.querySelector('#ef-l-em').value);lessons[idx].location=overlay.querySelector('#ef-l-loc').value;lessons[idx].plannedFee=parseInt(overlay.querySelector('#ef-l-fee').value)||0;const stuFee=student?.defaultFee||Store.getCourseFee(student?.courseType||'institution');if(lessons[idx].plannedFee>=200||lessons[idx].plannedFee<=0)lessons[idx].plannedFee=stuFee;lessons[idx].status=status;lessons[idx].isAdjusted=true;lessons[idx].notes=overlay.querySelector('#ef-l-notes').value;
-    if(overlay.querySelector('#ef-l-permanent').checked&&student){const d=new Date(lessons[idx].date);const wd=d.getDay();const hasSch=student.schedules?student.schedules.some(sc=>sc.weekday===wd):false;if(!hasSch&&!student.schedules)student.schedules=[];if(!hasSch)student.schedules.push({weekday:wd,startHour:lessons[idx].startHour,startMinute:lessons[idx].startMinute,endHour:lessons[idx].endHour,endMinute:lessons[idx].endMinute,location:lessons[idx].location,fee:lessons[idx].plannedFee,campusId:lessons[idx].campusId});student.defaultFee=lessons[idx].plannedFee;student.defaultLocation=lessons[idx].location;const students=Store.students();const si=students.findIndex(x=>x.id===student.id);if(si>=0)students[si]=student;Store.saveStudents(students);generateLessons();}
-    Store.saveLessons(lessons);return true;
+    Store.saveLessons(lessons);
+    if(overlay.querySelector('#ef-l-permanent').checked&&student){const d=new Date(lessons[idx].date);const wd=d.getDay();const matchSch=student.schedules?.find(sc=>sc.weekday===wd&&sc.startHour===l.startHour&&(sc.startMinute||0)===(l.startMinute||0));if(matchSch){matchSch.startHour=lessons[idx].startHour;matchSch.startMinute=lessons[idx].startMinute;matchSch.endHour=lessons[idx].endHour;matchSch.endMinute=lessons[idx].endMinute;matchSch.location=lessons[idx].location;matchSch.fee=0}else{if(!student.schedules)student.schedules=[];student.schedules.push({weekday:wd,startHour:lessons[idx].startHour,startMinute:lessons[idx].startMinute,endHour:lessons[idx].endHour,endMinute:lessons[idx].endMinute,location:lessons[idx].location,fee:lessons[idx].plannedFee,campusId:lessons[idx].campusId})};student.defaultFee=lessons[idx].plannedFee;student.defaultLocation=lessons[idx].location;const students=Store.students();const si=students.findIndex(x=>x.id===student.id);if(si>=0)students[si]=student;Store.saveStudents(students);generateLessons();}
+    return true;
   });
 	  setTimeout(()=>{},100);
 }
