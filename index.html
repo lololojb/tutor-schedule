@@ -259,8 +259,9 @@ function generateLessons(){
     stu.schedules.forEach(sch=>{
       let cur=new Date(Math.max(start.getTime(),today.getTime()));
       while(cur<=end){
-        if(cur.getDay()===sch.weekday){
-          const ds=cur.toDateStr();
+	        if(cur.getDay()===sch.weekday){
+	          if(sch.biweekly){const start=new Date(sch.biweeklyStart||cur);start.setHours(0,0,0,0);const weekNum=Math.floor((cur.getTime()-start.getTime())/(7*864e5));if(weekNum%2!==0){cur=C.addDays(cur,1);continue;}}
+	          const ds=cur.toDateStr();
           const exists=existing.some(l=>
             l.studentId===stu.id&&l.date===ds
             &&l.startHour===sch.startHour&&(l.startMinute||0)===(sch.startMinute||0)
@@ -287,7 +288,7 @@ function generateLessons(){
     if(!stu||!stu.schedules||!stu.schedules.length) return l.status!=='scheduled'||l.isAdjusted;
     const d=new Date(l.date);
     const wd=d.getDay();
-    return stu.schedules.some(sch=>sch.weekday===wd&&sch.startHour===l.startHour&&sch.startMinute===(l.startMinute||0))||l.status!=='scheduled'||l.isAdjusted;
+    return stu.schedules.some(sch=>{if(sch.weekday!==wd||sch.startHour!==l.startHour||(sch.startMinute||0)!==(l.startMinute||0))return false;if(sch.biweekly){const start=new Date(sch.biweeklyStart||d);start.setHours(0,0,0,0);const wk=Math.floor((d.getTime()-start.getTime())/(7*864e5));return wk%2===0;}return true;})||l.status!=='scheduled'||l.isAdjusted;
   });
   Store.saveLessons(cleaned);
 }
@@ -379,7 +380,7 @@ function renderToday(){
     const allLessons=Store.lessons();
     const monthDone=allLessons.filter(l=>l.date>=ms.toDateStr()&&l.date<me.toDateStr()&&l.status==='completed');
     const monthScheduled=allLessons.filter(l=>l.date>=C.today().toDateStr()&&l.date<me.toDateStr()&&l.status==='scheduled');
-    const monthIncome=monthDone.reduce((s,l)=>s+(l.plannedFee||0),0);
+    const monthIncome=monthDone.reduce((s,l)=>s+(getLessonIncome(l)),0);
     // Weekly stats
     const mon=C.monday(now);const monStr=mon.toDateStr();const weekEnd=C.addDays(mon,7).toDateStr();
     const weekDone=allLessons.filter(l=>l.date>=monStr&&l.date<weekEnd&&l.status==='completed');
@@ -430,7 +431,7 @@ function renderToday(){
               <span class="badge ${bc}" style="margin-top:4px">${bt}</span>
             </div>
             <div class="fee-col">
-              <div class="fee">¥${l.plannedFee}</div>
+              <div class="fee">¥${getLessonIncome(l)}</div>
               ${l.status==='scheduled'?`<button class="btn btn-sm" data-quick-leave="${l.id}" style="color:var(--orange);font-size:20px;padding:2px 4px;margin-top:4px;margin-right:10px">✕</button><button class="btn btn-sm" data-quick-done="${l.id}" style="color:var(--green);font-size:20px;padding:2px 6px;margin-top:4px">✓</button>`:''}
             </div>
           </div>`;
@@ -626,7 +627,7 @@ function renderStudents(){
       const campus=campuses.find(c=>c.id===s.defaultCampusId);
       const schs=(s.schedules||[]).map(sc=>{
         const wd=['日','一','二','三','四','五','六'][sc.weekday];
-        return`每${wd} ${fmt.time(sc.startHour,sc.startMinute)}-${fmt.time(sc.endHour,sc.endMinute)}`;
+        return`${sc.biweekly?'🔄':''}每${wd} ${fmt.time(sc.startHour,sc.startMinute)}-${fmt.time(sc.endHour,sc.endMinute)}`;
       }).join('、');
       html+=`<div class="student-row" data-student="${s.id}">
         <div class="av" style="background:${s.isActive===false?'#8e8e93':s.courseType==='private'?'#FF9500':s.courseType==='practice'?'#AF52DE':'#007AFF'}">${s.name[0]}</div>
@@ -646,9 +647,9 @@ function renderStudentDetail(sid){
   const now=new Date();const ms=new Date(now.getFullYear(),now.getMonth(),1).toDateStr();
   const me=new Date(now.getFullYear(),now.getMonth()+1,1).toDateStr();
   const ml=lessons.filter(l=>l.date>=ms&&l.date<me&&l.status==='completed');
-  const mi=ml.reduce((sum,l)=>sum+(l.plannedFee||0),0);
+  const mi=ml.reduce((sum,l)=>sum+(getLessonIncome(l)),0);
   const allComp=lessons.filter(l=>l.status==='completed');
-  const totalIncome=allComp.reduce((sum,l)=>sum+(l.plannedFee||0),0);
+  const totalIncome=allComp.reduce((sum,l)=>sum+(getLessonIncome(l)),0);
 
   let html=`<div style="padding:16px">
     <button class="btn btn-ghost" id="btn-back-students">‹ 返回</button>
@@ -663,7 +664,7 @@ function renderStudentDetail(sid){
     html+=`<p style="color:var(--sec);margin-top:4px">未设置固定排课</p>`;
   }else{
     s.schedules.forEach((sc,i)=>{
-      html+=`<div class="sch-chip">${['日','一','二','三','四','五','六'][sc.weekday]} ${fmt.time(sc.startHour,sc.startMinute)}-${fmt.time(sc.endHour,sc.endMinute)} ${sc.location||''} ¥${sc.fee||s.defaultFee}</div>`;
+      html+=`<div class="sch-chip">${['日','一','二','三','四','五','六'][sc.weekday]} ${fmt.time(sc.startHour,sc.startMinute)}-${fmt.time(sc.endHour,sc.endMinute)} ${sc.location||''} ¥${sc.fee||s.defaultFee}${sc.biweekly?' 🔄':''}</div>`;
     });
   }
 
@@ -683,7 +684,7 @@ function renderStudentDetail(sid){
       const bt=l.status==='completed'?'已完成':l.status==='cancelled'?'已取消':l.status==='leave'?'请假':'待上课';
       html+=`<div class="student-row" data-lesson="${l.id}">
         <div style="flex:1"><div style="font-weight:500">${fmt.dateFull(l.date)} ${fmt.time(l.startHour,l.startMinute)}-${fmt.time(l.endHour,l.endMinute)}</div>
-        <div style="font-size:13px;color:var(--sec);margin-top:2px">${l.location||''} · ¥${l.plannedFee}</div></div>
+        <div style="font-size:13px;color:var(--sec);margin-top:2px">${l.location||''} · ¥${getLessonIncome(l)}</div></div>
         <span class="badge ${bc}">${bt}</span></div>`;
     });
     html+='</div>';
@@ -700,7 +701,7 @@ function renderFinance(){
   const all=Store.lessons().filter(l=>l.date>=ms&&l.date<nm);
   const done=all.filter(l=>l.status==='completed');
   const leave=all.filter(l=>l.status==='leave');
-  const income=done.reduce((s,l)=>s+(l.plannedFee||0),0);
+  const income=done.reduce((s,l)=>s+(getLessonIncome(l)),0);
 
   let html=`<div style="display:flex;align-items:center;justify-content:center;padding:16px;gap:16px">
     <button id="btn-pm">‹</button><span style="font-weight:700;font-size:18px">${fmt.month(financeMonth)}</span><button id="btn-nm">›</button>
@@ -712,7 +713,7 @@ function renderFinance(){
   </div>`;
 
   // === 按学生（折叠） ===
-  const by={};done.forEach(l=>{const k=l.studentId;if(!by[k])by[k]={n:0,t:0};by[k].n++;by[k].t+=(l.plannedFee||0);});
+  const by={};done.forEach(l=>{const k=l.studentId;if(!by[k])by[k]={n:0,t:0};by[k].n++;by[k].t+=(getLessonIncome(l));});
   const ents=Object.entries(by).sort((a,b)=>b[1].t-a[1].t);
   if(ents.length){
     let stuRows='';
@@ -742,7 +743,7 @@ function renderFinance(){
       const wkId='fin-wk-'+wkIdx;
       const mon=new Date(monStr);
       const sun=C.addDays(mon,6);
-      const wkTotal=wkLessons.reduce((s,l)=>s+(l.plannedFee||0),0);
+      const wkTotal=wkLessons.reduce((s,l)=>s+getLessonIncome(l),0);
 
       html+=`<div style="padding:8px 0;border-bottom:1px solid var(--sep);cursor:pointer" onclick="const b=document.getElementById('${wkId}');const a=this.querySelector('.arr');b.style.display=b.style.display==='none'?'block':'none';a.textContent=b.style.display==='none'?'▶':'▼';"><div style="display:flex;align-items:center"><span class="arr" style="font-size:10px;margin-right:6px">▶</span><span style="font-weight:500;font-size:13px">${mon.getMonth()+1}/${mon.getDate()}-${sun.getMonth()+1}/${sun.getDate()}</span><span style="color:var(--sec);font-size:12px;margin-left:8px">${wkLessons.length}节 ¥${wkTotal}</span></div></div>`;
 
@@ -802,7 +803,7 @@ function renderSettings(){
   html+=`<div style="text-align:center;padding:24px 16px">
     <button id="btn-clear" style="font-size:12px;color:var(--sec)">🗑 清除全部数据</button>
   </div>`;
-  html+=`<div style="text-align:center;padding-bottom:24px"><p style="font-size:12px;color:var(--sec)">家教排课 PWA · 通勤时间通过地图自动计算 · v34</p></div>`;
+  html+=`<div style="text-align:center;padding-bottom:24px"><p style="font-size:12px;color:var(--sec)">家教排课 PWA · 通勤时间通过地图自动计算 · v35</p></div>`;
   return html;
 }
 
@@ -976,7 +977,7 @@ function showMonthDoneSheet(){
   const done=Store.lessons()
     .filter(l=>l.date>=ms&&l.date<me&&l.status==='completed')
     .sort((a,b)=>a.date.localeCompare(b.date)||((a.startHour*60+a.startMinute)-(b.startHour*60+b.startMinute)));
-  const total=done.reduce((s,l)=>s+(l.plannedFee||0),0);
+  const total=done.reduce((s,l)=>s+(getLessonIncome(l)),0);
   let rows=done.map(l=>{
     const stu=Store.students().find(s=>s.id===l.studentId);
     return `<div class="student-row" data-lesson="${l.id}" style="cursor:pointer">
@@ -1089,6 +1090,7 @@ function showStudentEdit(student){
       <option value="practice" ${ct==='practice'?'selected':''}>陪练课 (¥${Store.getCourseFee('practice')}/节)</option>
     </select>
     <label style="margin-top:8px">课时费 ¥/节 <span style="font-weight:400;font-size:12px">（改类型自动填，也可手动改）</span></label><input id="ef-fee" type="number" value="${s.defaultFee||Store.getCourseFee(ct)}" placeholder="${Store.getCourseFee(ct)}">
+	    <label style="margin-top:8px">计费倍数 <span style="font-weight:400;font-size:12px">（如4/3≈1.33）</span></label><input id="ef-multiplier" type="number" value="${s.feeMultiplier||1}" step="0.01" min="0.5" max="3">
     <label style="margin-top:8px">默认校区</label><select id="ef-campus"><option value="">无</option>${campuses.map(c=>`<option value="${c.id}" ${s.defaultCampusId===c.id?'selected':''}>${c.name}</option>`).join('')}</select>
     <label style="margin-top:8px">默认地点</label><input id="ef-loc" value="${s.defaultLocation||''}" placeholder="如B座302（选填，优先级低于排课地点）">
   </div>
@@ -1118,6 +1120,7 @@ function showStudentEdit(student){
       courseType:overlay.querySelector('#ef-type').value||'private',
       defaultLocation:overlay.querySelector('#ef-loc').value.trim(),
       defaultFee:parseInt(overlay.querySelector('#ef-fee').value)||0,
+      feeMultiplier:parseFloat(overlay.querySelector('#ef-multiplier')?.value)||1,
       defaultCampusId:overlay.querySelector('#ef-campus').value||null,
       schedules,isActive:true,
       notes:overlay.querySelector('#ef-notes').value.trim(),
@@ -1198,7 +1201,7 @@ function showLessonEdit(lesson){
     if(idx<0)return true;
     lessons[idx].date=overlay.querySelector('#ef-l-date').value;lessons[idx].startHour=parseInt(overlay.querySelector('#ef-l-sh').value);lessons[idx].startMinute=parseInt(overlay.querySelector('#ef-l-sm').value);lessons[idx].endHour=parseInt(overlay.querySelector('#ef-l-eh').value);lessons[idx].endMinute=parseInt(overlay.querySelector('#ef-l-em').value);lessons[idx].location=overlay.querySelector('#ef-l-loc').value;lessons[idx].plannedFee=parseInt(overlay.querySelector('#ef-l-fee').value)||0;const stuFee=student?.defaultFee||Store.getCourseFee(student?.courseType||'institution');if(lessons[idx].plannedFee>=200||lessons[idx].plannedFee<=0)lessons[idx].plannedFee=stuFee;lessons[idx].status=status;lessons[idx].isAdjusted=true;lessons[idx].notes=overlay.querySelector('#ef-l-notes').value;
     Store.saveLessons(lessons);
-    if(overlay.querySelector('#ef-l-permanent').checked&&student){const d=new Date(lessons[idx].date);const wd=d.getDay();const matchSch=student.schedules?.find(sc=>sc.weekday===wd&&sc.startHour===l.startHour&&(sc.startMinute||0)===(l.startMinute||0));if(matchSch){matchSch.startHour=lessons[idx].startHour;matchSch.startMinute=lessons[idx].startMinute;matchSch.endHour=lessons[idx].endHour;matchSch.endMinute=lessons[idx].endMinute;matchSch.location=lessons[idx].location;matchSch.fee=0}else{if(!student.schedules)student.schedules=[];student.schedules.push({weekday:wd,startHour:lessons[idx].startHour,startMinute:lessons[idx].startMinute,endHour:lessons[idx].endHour,endMinute:lessons[idx].endMinute,location:lessons[idx].location,fee:lessons[idx].plannedFee,campusId:lessons[idx].campusId})};student.defaultFee=lessons[idx].plannedFee;student.defaultLocation=lessons[idx].location;const students=Store.students();const si=students.findIndex(x=>x.id===student.id);if(si>=0)students[si]=student;Store.saveStudents(students);generateLessons();}
+    if(overlay.querySelector('#ef-l-permanent').checked&&student){const origD=new Date(l.date);const origWd=origD.getDay();const newWd=new Date(lessons[idx].date).getDay();const matchSch=student.schedules?.find(sc=>sc.weekday===origWd&&sc.startHour===l.startHour&&(sc.startMinute||0)===(l.startMinute||0));if(matchSch){if(newWd!==origWd)matchSch.weekday=newWd;matchSch.startHour=lessons[idx].startHour;matchSch.startMinute=lessons[idx].startMinute;matchSch.endHour=lessons[idx].endHour;matchSch.endMinute=lessons[idx].endMinute;matchSch.location=lessons[idx].location;matchSch.fee=0}else{if(!student.schedules)student.schedules=[];student.schedules.push({weekday:newWd,startHour:lessons[idx].startHour,startMinute:lessons[idx].startMinute,endHour:lessons[idx].endHour,endMinute:lessons[idx].endMinute,location:lessons[idx].location,fee:lessons[idx].plannedFee,campusId:lessons[idx].campusId})};student.defaultFee=lessons[idx].plannedFee;student.defaultLocation=lessons[idx].location;const students=Store.students();const si=students.findIndex(x=>x.id===student.id);if(si>=0)students[si]=student;Store.saveStudents(students);generateLessons();}
     return true;
   });
 	  setTimeout(()=>{},100);
@@ -1293,6 +1296,8 @@ function filterStudentDOM(){
   });
 }
 
+function getLessonIncome(l){const stu=Store.students().find(s=>s.id===l.studentId);return(l.plannedFee||0)*(stu?.feeMultiplier||1);}
+
 // ==================== UTILS ====================
 function getDayLessons(date){const ds=date.toDateStr();return Store.lessons().filter(l=>l.date===ds&&l.status!=="cancelled").sort((a,b)=>(a.startHour*60+a.startMinute)-(b.startHour*60+b.startMinute));}
 function dateTitle(d){const today=C.today();if(C.sameDay(d,today))return'今天';if(C.sameDay(d,C.addDays(today,-1)))return'昨天';if(C.sameDay(d,C.addDays(today,1)))return'明天';return`${d.getMonth()+1}月${d.getDate()}日 周${fmt.weekday(d)}`;}
@@ -1360,6 +1365,14 @@ function loadDefaultData(){
       s.schedules.forEach(sc=>{sc.fee=95;});
     }
   });
+  // 陈彦童：上3节按4节计费
+  const cyTong=result.students.find(s=>s.name==='陈彦童');
+  if(cyTong){cyTong.feeMultiplier=4/3;cyTong.defaultFee=80;}
+  // 黎佳峻/黎凡宇：单双周交替，本周黎凡宇
+  const liJiaJun=result.students.find(s=>s.name==='黎佳峻');
+  if(liJiaJun){liJiaJun.schedules.forEach(sc=>{sc.biweekly=true;sc.biweeklyStart='2026-05-03';});}
+  const liFanYu=result.students.find(s=>s.name==='黎凡宇');
+  if(liFanYu){liFanYu.schedules.forEach(sc=>{sc.biweekly=true;sc.biweeklyStart='2026-05-10';});}
   const students=result.students;
   const lessons=result.lessons.map(l=>{
     const stu=students.find(s=>s.name===l.studentName);
@@ -1384,7 +1397,35 @@ fixStudents.forEach(s=>{if(s.defaultFee>=200){s.defaultFee=80;fixedS++;}});
 fixLessons.forEach(l=>{if(l.plannedFee>=200){const stu=fixStudents.find(s=>s.id===l.studentId);l.plannedFee=stu?.defaultFee||80;fixedL++;}});
 if(fixedS>0)Store.saveStudents(fixStudents);
 if(fixedL>0)Store.saveLessons(fixLessons);
-// 首次使用自动加载默认课表
+// 迁移：黎佳峻/黎凡宇 → 单双周（每次启动强制修正）
+  const bwStudents=Store.students();
+  let fixedBW=false;
+  const liJJ=bwStudents.find(s=>s.name==='黎佳峻');
+  if(liJJ&&liJJ.schedules){liJJ.schedules.forEach(sc=>{sc.biweekly=true;sc.biweeklyStart='2026-05-03';fixedBW=true;});}
+  const liFY=bwStudents.find(s=>s.name==='黎凡宇');
+  if(liFY&&liFY.schedules){liFY.schedules.forEach(sc=>{sc.biweekly=true;sc.biweeklyStart='2026-05-10';fixedBW=true;});}
+  // 清理他们在错周的旧课程
+  if(fixedBW){
+    Store.saveStudents(bwStudents);
+    const bwLessons=Store.lessons();
+    const cleanedLessons=bwLessons.filter(l=>{
+      const s=bwStudents.find(x=>x.id===l.studentId);
+      if(!s||l.status!=='scheduled') return true; // keep non-scheduled + other students
+      const d=new Date(l.date);
+      return s.schedules.some(sc=>{
+        if(sc.weekday!==d.getDay()) return false;
+        if(!sc.biweekly) return true;
+        const start=new Date(sc.biweeklyStart||d);start.setHours(0,0,0,0);
+        const wk=Math.floor((d.getTime()-start.getTime())/(7*864e5));
+        return wk%2===0;
+      });
+    });
+    if(cleanedLessons.length!==bwLessons.length){Store.saveLessons(cleanedLessons);}
+  }
+  // 迁移：陈彦童 feeMultiplier
+  const cyt=bwStudents.find(s=>s.name==='陈彦童');
+  if(cyt&&!cyt.feeMultiplier){cyt.feeMultiplier=4/3;cyt.defaultFee=80;Store.saveStudents(bwStudents);}
+  // 首次使用自动加载默认课表
 if(!Store.students().length){
   loadDefaultData();
 }
