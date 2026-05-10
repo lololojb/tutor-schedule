@@ -673,7 +673,7 @@ function renderStudentDetail(sid){
     <div class="summary-card"><div class="t">本月收入</div><div class="v green">¥${mi}</div></div>
     <div class="summary-card"><div class="t">累计收入</div><div class="v green">¥${totalIncome}</div></div>
   </div>
-  <div class="btn-group"><button class="btn btn-primary" data-edit-student="${s.id}">编辑</button><button class="btn btn-danger" data-delete-student="${s.id}">删除</button></div>
+  <div class="btn-group"><button class="btn btn-primary" data-edit-student="${s.id}">编辑</button>${s.isActive===false?`<button class="btn" style="background:var(--green);color:#fff" data-restore-student="${s.id}">恢复</button><button class="btn btn-danger" data-delete-student="${s.id}">彻底删除</button>`:`<button class="btn btn-danger" data-deactivate-student="${s.id}">停用</button>`}</div>
   <h3 style="margin-top:24px;font-size:15px;font-weight:600">课程记录 (${lessons.length})</h3></div>`;
 
   if(!lessons.length){html+=`<div class="empty"><div class="sub">暂无记录</div></div>`;}
@@ -1283,7 +1283,15 @@ function bindEvents(){
 function bindStudentDetailEvents(){
   $('#btn-back-students')?.addEventListener('click',()=>render());
   $$('[data-edit-student]').forEach(el=>{el.onclick=function(){const s=Store.students().find(x=>x.id===this.dataset.editStudent);if(s)showStudentEdit(s);};});
-  $$('[data-delete-student]').forEach(el=>{el.onclick=function(){if(confirm('删除该学生及所有课程记录？')){Store.saveStudents(Store.students().filter(x=>x.id!==this.dataset.deleteStudent));Store.saveLessons(Store.lessons().filter(x=>x.studentId!==this.dataset.deleteStudent));render();}};});
+  // 停用学生
+  function deactivateStudent(el){el.onclick=function(){var sid=this.getAttribute('data-deactivate-student');if(confirm('停用该学生? 课程记录保留, 可随时恢复')){var list=Store.students();var s=list.find(function(x){return x.id===sid});if(s){s.isActive=false;Store.saveStudents(list);render();toast('已停用, 可恢复');}}};}
+  $$('[data-deactivate-student]').forEach(deactivateStudent);
+  // 恢复学生
+  function restoreStudent(el){el.onclick=function(){var sid=this.getAttribute('data-restore-student');var list=Store.students();var s=list.find(function(x){return x.id===sid});if(s){s.isActive=true;Store.saveStudents(list);generateLessons();render();}};}
+  $$('[data-restore-student]').forEach(restoreStudent);
+  // 彻底删除
+  function deleteStudent(el){el.onclick=function(){var sid=this.getAttribute('data-delete-student');if(confirm('删除该学生及所有课程?')){Store.saveStudents(Store.students().filter(function(x){return x.id!==sid}));Store.saveLessons(Store.lessons().filter(function(x){return x.studentId!==sid}));render();}};}
+  $$('[data-delete-student]').forEach(deleteStudent);
   $$('.student-row[data-lesson]').forEach(el=>{el.onclick=()=>{const l=Store.lessons().find(x=>x.id===el.dataset.lesson);if(l)showLessonEdit(l);};});
 }
 
