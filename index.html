@@ -1438,6 +1438,8 @@ if(!Store.students().length){
   loadDefaultData();
 }
 generateLessons();
+  // 修正：清除日期与排课周几不匹配的课程
+  const wdStudents=Store.students();const wdLessons=Store.lessons();let wdFixed=0;const wdClean=wdLessons.filter(function(l){if(l.status!=="scheduled"||l.isAdjusted) return true;var d=new Date(l.date);var wd=d.getDay();var stu=wdStudents.find(function(s){return s.id===l.studentId});if(!stu||!stu.schedules||!stu.schedules.length) return true;return stu.schedules.some(function(sc){return sc.weekday===wd});});wdFixed=wdLessons.length-wdClean.length;if(wdFixed>0){Store.saveLessons(wdClean);generateLessons();}
 // 恢复误删的郑紫玥
 const restZZY=Store.students();
 if(restZZY.length>0&&!restZZY.find(s=>s.name==='郑紫玥')){
